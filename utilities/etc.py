@@ -49,11 +49,23 @@ def check_for_updates():
 
 
 def delete_default(credentials: Credentials):
-	"""Deletes the default welcome file."""
-	mega.login(credentials.email, credentials.password)
-	pdf = mega.get_files_in_node(2)
-	key = list(pdf.keys())[0]
-	mega.destroy(key)
+	"""Deletes the default welcome file.
+
+	The default account has no welcome file (or the mega.py library call
+	fails), so guard every step and treat "nothing to delete" as success.
+	"""
+	try:
+		mega.login(credentials.email, credentials.password)
+	except Exception:
+		return
+	try:
+		pdf = mega.get_files_in_node(2)
+		if not pdf:
+			return
+		key = list(pdf.keys())[0]
+		mega.destroy(key)
+	except Exception:
+		return
 
 
 def reinstall_tenacity():  # sourcery skip: extract-method

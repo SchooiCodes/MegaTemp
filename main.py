@@ -27,6 +27,7 @@ from utilities.web import (
 	mail_login,
 	get_mail,
 )
+from pymailtm.pymailtm import CouldNotGetMessagesException
 from utilities.etc import (
 	Credentials,
 	p_print,
@@ -55,6 +56,8 @@ default_installs = [
 args = [
 	"--no-sandbox",
 	"--disable-setuid-sandbox",
+	"--disable-gpu",
+	"--disable-dev-shm-usage",
 	"--disable-infobars",
 	"--window-position=0,0",
 	"--ignore-certificate-errors",
@@ -142,12 +145,21 @@ def loop_registrations(loop_count: int, executable_path: str, config: Config):
 		p_print(f"Loop {_ + 1}/{loop_count}", Colours.OKGREEN)
 		clear_tmp()
 
-		credentials = asyncio.run(generate_mail())
-		asyncio.run(register(credentials, executable_path, config))
+		asyncio.run(register(None, executable_path, config))
 
 
-async def register(credentials: Credentials, executable_path: str, config: Config):
-	"""Registers and verifies mega.nz account."""
+async def register(
+	credentials: Credentials | None, executable_path: str, config: Config
+):
+	"""Registers and verifies mega.nz account.
+
+	MEGA's confirmation email is sometimes delayed or not delivered by the
+	mail provider. To stay robust we retry the whole registration (with a
+	fresh email address) a few times before giving up.
+	"""
+	max_attempts = 4
+	message = None
+
 	browser = await pyppeteer.launch(
 		{
 			"headless": True,
@@ -161,17 +173,59 @@ async def register(credentials: Credentials, executable_path: str, config: Confi
 	)
 
 	context = await browser.createIncognitoBrowserContext()
-	page = await context.newPage()
 
-	await type_name(page, credentials)
-	await type_password(page, credentials)
-	await finish_form(page, credentials)
-	mail = await mail_login(credentials)
+	for attempt in range(1, max_attempts + 1):
+		credentials = await generate_mail()
+		page = await context.newPage()
+		try:
+			await type_name(page, credentials)
+			await type_password(page, credentials)
+			await finish_form(page, credentials)
 
-	await asyncio.sleep(1.5)
-	message = await get_mail(mail)
+			mail = await mail_login(credentials)
+			await asyncio.sleep(1.5)
+			try:
+				message = await get_mail(mail)
+			except CouldNotGetMessagesException:
+				p_print(
+					f"Confirmation email not received (attempt {attempt}/{max_attempts}). "
+					"Retrying with a new email address...",
+					Colours.WARNING,
+				)
+				await page.close()
+				continue
 
-	await initial_setup(context, message, credentials)
+			try:
+				await initial_setup(context, message, credentials)
+				break  # account confirmed successfully
+			except RuntimeError as e:
+				p_print(
+					f"Account confirmation failed ({e}). "
+					f"Retrying with a new email address (attempt {attempt}/{max_attempts})...",
+					Colours.WARNING,
+				)
+				await page.close()
+				continue
+		except Exception as e:
+			p_print(
+				f"Registration step failed ({e}). "
+				f"Retrying with a new email address (attempt {attempt}/{max_attempts})...",
+				Colours.WARNING,
+			)
+			try:
+				await page.close()
+			except Exception:
+				pass
+			continue
+
+	if message is None:
+		await browser.close()
+		p_print(
+			"Gave up registering the account after several attempts.",
+			Colours.FAIL,
+		)
+		sys.exit(1)
+
 	await asyncio.sleep(0.5)
 	await browser.close()
 
@@ -181,7 +235,13 @@ async def register(credentials: Credentials, executable_path: str, config: Confi
 		Colours.OKCYAN,
 	)
 
-	delete_default(credentials)
+	try:
+		delete_default(credentials)
+	except Exception as e:
+		p_print(
+			f"Warning: could not remove the default welcome file: {e}",
+			Colours.WARNING,
+		)
 	save_credentials(credentials, config.accountFormat)
 
 	if console_args.file is not None:
@@ -216,5 +276,4 @@ if __name__ == "__main__":
 		loop_registrations(console_args.loop, executable_path, config)
 	else:
 		clear_tmp()
-		credentials = asyncio.run(generate_mail())
-		asyncio.run(register(credentials, executable_path, config))
+		asyncio.run(register(None, executable_path, config))

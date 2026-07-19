@@ -1,0 +1,10 @@
+name: 📝 Other
+description: Anything that doesn't fit the bug/feature templates
+title: "[Other] "
+body:
+  - type: textarea
+    id: details
+    attributes:
+      label: What would you like to share?
+    validations:
+      required: true
