@@ -13,6 +13,35 @@ import pyppeteer.page
 
 from utilities.etc import Credentials, p_print, Colours
 
+
+async def _robust_type(page, selector: str, text: str):
+	"""Type text into a field reliably.
+
+	MEGA's custom input handlers drop the first keystroke if typing starts
+	immediately after focusing, which silently shortens the value. To avoid
+	that we: focus, type a throwaway character, select+delete it, then type
+	the real text with a small per-character delay, and finally verify the
+	field holds exactly what we intended.
+	"""
+	await page.waitForSelector(selector)
+	await page.focus(selector)
+	await asyncio.sleep(0.3)
+	await page.keyboard.type("x", delay=30)
+	await page.evaluate(
+		f"() => {{ const e = document.querySelector('{selector}'); e.select(); }}"
+	)
+	await page.keyboard.down("Backspace")
+	await page.keyboard.up("Backspace")
+	await asyncio.sleep(0.2)
+	await page.keyboard.type(text, delay=50)
+	value = await page.evaluate(f"() => document.querySelector('{selector}').value")
+	if value != text:
+		raise RuntimeError(
+			f"Text did not register in {selector} "
+			f"(got {len(value)} chars, expected {len(text)})."
+		)
+
+
 fake = Faker()
 
 
@@ -64,8 +93,7 @@ async def initial_setup(context, message, credentials):
 		p_print(html[:2000], Colours.WARNING)
 		raise RuntimeError("Confirm page password field not found.")
 
-	await confirm_page.click(password_field)
-	await confirm_page.type(password_field, credentials.password, delay=50)
+	await _robust_type(confirm_page, password_field, credentials.password)
 
 	# The confirm page's submit button has the text "Confirm". Click the
 	# visible one specifically (the login template also has a .login-button).
@@ -181,13 +209,12 @@ async def finish_form(page: pyppeteer.page.Page, credentials: Credentials):
 async def type_password(page: pyppeteer.page.Page, credentials: Credentials):
 	"""Types the password into the password field and accepts terms.
 
-	MEGA's password input uses a custom input handler, so we must focus the
-	field explicitly and type with a small per-character delay or the value
-	ends up empty (which later causes "Invalid password" at confirmation).
+	MEGA's password input uses a custom input handler that drops the first
+	keystroke if typing starts immediately after focusing. A shortened value
+	makes confirmation fail with "Invalid password" and yields dead accounts,
+	so we type through `_robust_type` (which primes, clears and verifies).
 	"""
-	await page.waitForSelector("#register-password")
-	await page.click("#register-password")
-	await page.type("#register-password", credentials.password, delay=50)
+	await _robust_type(page, "#register-password", credentials.password)
 	p_print("Registered account successfully!", Colours.OKGREEN)
 
 

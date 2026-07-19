@@ -207,19 +207,23 @@ The registration flow has two browser phases:
 2. **Confirmation** — the confirmation link from mail.tm opens a page where the
    account password is entered a second time to finish creating the account.
 
-The upstream project typed the registration password without focus/delay, so
-the value was silently dropped. The account was "created" but with no password,
-so confirmation rejected it (`Invalid password`) and the saved credentials were
-**dead** — logging in later reported *"invalid email or password."*
+The upstream project typed the registration password with `page.type()` right
+after focusing the field. MEGA's custom password input drops the **first
+keystroke** when typing starts immediately after focus, so the stored password
+was silently one character short of what we typed. Confirmation then rejected
+it (`Invalid password`) and the saved credentials were **dead** — logging in
+later reported *"invalid email or password."*
 
 MegaTemp fixes this by:
 
-- Focusing + typing the password with a small delay in `utilities/web.py`
-  (`type_password`), verified to register the real value.
+- Typing the password through a robust routine in `utilities/web.py`
+  (`_robust_type`): focus, prime with a throwaway character, clear it, then type
+  the real password with a per-character delay, and **verify** the field holds
+  the exact value before continuing (it raises otherwise, so a dead account is
+  never saved).
 - Detecting a *successful* confirmation by leaving the confirm page (the
   recovery-key screen) instead of relying on an outdated `#freeStart` selector,
-  and raising on failure so the run retries with a fresh email rather than
-  saving dead credentials.
+  and raising on failure so the run retries with a fresh email.
 - Creating a fresh browser page per attempt so a transient Pyppeteer error
   can't poison the retry loop.
 
