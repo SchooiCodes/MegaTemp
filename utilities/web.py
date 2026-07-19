@@ -4,6 +4,7 @@ import asyncio
 import re
 import string
 import random
+import html
 import pymailtm
 from faker import Faker
 
@@ -12,6 +13,20 @@ import pyppeteer
 import pyppeteer.page
 
 from utilities.etc import Credentials, p_print, Colours
+
+# Module-level verbosity flag, toggled from main.py via set_verbose().
+_VERBOSE = False
+
+
+def set_verbose(value: bool) -> None:
+	"""Enable/disable verbose logging across web utilities."""
+	global _VERBOSE
+	_VERBOSE = value
+
+
+def _log(text, colour=Colours.OKCYAN):
+	if _VERBOSE:
+		p_print(text, colour)
 
 
 async def _robust_type(page, selector: str, text: str):
@@ -22,24 +37,31 @@ async def _robust_type(page, selector: str, text: str):
 	that we: focus, type a throwaway character, select+delete it, then type
 	the real text with a small per-character delay, and finally verify the
 	field holds exactly what we intended.
+
+	The selector is passed to page.evaluate as an argument (not interpolated
+	into the JS string) so that any quoting in a selector cannot break it.
 	"""
 	await page.waitForSelector(selector)
 	await page.focus(selector)
 	await asyncio.sleep(0.3)
 	await page.keyboard.type("x", delay=30)
 	await page.evaluate(
-		f"() => {{ const e = document.querySelector('{selector}'); e.select(); }}"
+		"(_sel) => { const e = document.querySelector(_sel); if (e) e.select(); }",
+		selector,
 	)
 	await page.keyboard.down("Backspace")
 	await page.keyboard.up("Backspace")
 	await asyncio.sleep(0.2)
 	await page.keyboard.type(text, delay=50)
-	value = await page.evaluate(f"() => document.querySelector('{selector}').value")
+	value = await page.evaluate(
+		"(_sel) => document.querySelector(_sel).value", selector
+	)
 	if value != text:
 		raise RuntimeError(
 			f"Text did not register in {selector} "
 			f"(got {len(value)} chars, expected {len(text)})."
 		)
+	return value
 
 
 fake = Faker()
@@ -69,7 +91,11 @@ async def initial_setup(context, message, credentials):
 	)
 	if not confirm_links:
 		raise RuntimeError("No MEGA confirmation link found in the email.")
-	confirm_link = confirm_links[0]
+
+	# Email bodies are HTML-escaped, so '&' becomes '&amp;' and the link is
+	# unusable until we decode it back.
+	confirm_link = html.unescape(confirm_links[0])
+	_log(f"Confirmation link: {confirm_link}")
 
 	confirm_page = await context.newPage()
 	await confirm_page.goto(confirm_link)
@@ -85,12 +111,12 @@ async def initial_setup(context, message, credentials):
 			continue
 
 	if password_field is None:
-		html = await confirm_page.content()
+		dom = await confirm_page.content()
 		p_print(
 			"Could not find a password field on the confirm page. Dumping DOM.",
 			Colours.WARNING,
 		)
-		p_print(html[:2000], Colours.WARNING)
+		p_print(dom[:2000], Colours.WARNING)
 		raise RuntimeError("Confirm page password field not found.")
 
 	await _robust_type(confirm_page, password_field, credentials.password)
@@ -118,18 +144,26 @@ async def initial_setup(context, message, credentials):
 				continue
 
 	# The account is only truly created once MEGA leaves the confirm page.
-	# The current SPA lands on the recovery-key / 2FA screen (URL "/key");
-	# older flows showed a welcome screen ("#freeStart"). Either means the
-	# account was created. If we stay on the confirm page, the password did
-	# not match -> raise so the caller retries with a fresh email instead of
-	# saving dead credentials.
-	await asyncio.sleep(3)
-	final_url = confirm_page.url
-	if "confirm" in final_url:
+	# Wait for the URL to change away from "confirm" (success lands on the
+	# recovery-key / 2FA screen, "#key") or for an error to surface. If we
+	# stay on the confirm page, the password did not match -> raise so the
+	# caller retries with a fresh email instead of saving dead credentials.
+	try:
+		await confirm_page.waitForFunction(
+			"() => !location.href.includes('confirm')",
+			timeout=30000,
+		)
+	except Exception:
+		# Still on the confirm page after 30s: surface any visible error text.
+		errors = await confirm_page.evaluate(
+			"""() => Array.from(
+				document.querySelectorAll('.error,.warning,.msg,.input-error,.toast,.notification')
+			).map(e => e.innerText.trim()).filter(Boolean)"""
+		)
 		raise RuntimeError(
 			"Account confirmation did not complete (still on confirm page). "
-			"The password may not have matched the registered account."
-		)
+			f"Visible errors: {errors}"
+		) from None
 
 	# Dismiss the recovery-key / 2FA setup screen by clicking "Later" if it
 	# is shown, so a brand-new browser session starts at the login screen.
@@ -150,8 +184,13 @@ async def initial_setup(context, message, credentials):
 
 
 async def mail_login(credentials: Credentials):
-	"""Logs into the mail.tm account with the generated credentials"""
-	while True:
+	"""Logs into the mail.tm account with the generated credentials.
+
+	Retries a bounded number of times (with backoff) on transient failures
+	instead of looping forever.
+	"""
+	max_retries = 10
+	for attempt in range(1, max_retries + 1):
 		try:
 			mail = pymailtm.Account(
 				credentials.id, credentials.email, credentials.emailPassword
@@ -159,7 +198,15 @@ async def mail_login(credentials: Credentials):
 			p_print("Retrieved mail successfully!", Colours.OKGREEN)
 			return mail
 		except CouldNotGetAccountException:
-			continue
+			p_print(
+				f"Mail login failed, retrying ({attempt}/{max_retries})...",
+				Colours.WARNING,
+			)
+			await asyncio.sleep(min(attempt, 5))
+
+	raise CouldNotGetAccountException(
+		"Could not log into the mail.tm account after multiple attempts."
+	)
 
 
 async def get_mail(mail, max_attempts: int = 80):
@@ -191,8 +238,12 @@ async def type_name(page: pyppeteer.page.Page, credentials: Credentials):
 	await page.goto("https://mega.nz/register")
 	await page.waitForSelector("#register-firstname")
 	await page.waitForSelector("#register-email")
+	# The firstname field is a plain input; page.type is fine here.
 	await page.type("#register-firstname", firstname)
-	await page.type("#register-email", credentials.email)
+	# The email field is also a custom MEGA input that can drop the first
+	# character, so type it robustly and verify before submitting.
+	await _robust_type(page, "#register-email", credentials.email)
+	_log(f"Registered with email: {credentials.email}")
 
 
 async def finish_form(page: pyppeteer.page.Page, credentials: Credentials):

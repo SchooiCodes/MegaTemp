@@ -26,6 +26,7 @@ from utilities.web import (
 	initial_setup,
 	mail_login,
 	get_mail,
+	set_verbose,
 )
 from pymailtm.pymailtm import CouldNotGetMessagesException
 from utilities.etc import (
@@ -85,7 +86,7 @@ parser.add_argument(
 	"--verbose",
 	required=False,
 	action="store_true",
-	help="Shows storage left while using keepalive function.",
+	help="Verbose logging (registration steps, mail addresses, keepalive storage).",
 )
 parser.add_argument(
 	"-f", "--file", required=False, help="Uploads a file to the account."
@@ -174,60 +175,63 @@ async def register(
 
 	context = await browser.createIncognitoBrowserContext()
 
-	for attempt in range(1, max_attempts + 1):
-		credentials = await generate_mail()
-		page = await context.newPage()
-		try:
-			await type_name(page, credentials)
-			await type_password(page, credentials)
-			await finish_form(page, credentials)
-
-			mail = await mail_login(credentials)
-			await asyncio.sleep(1.5)
+	try:
+		for attempt in range(1, max_attempts + 1):
+			credentials = await generate_mail()
+			page = await context.newPage()
 			try:
-				message = await get_mail(mail)
-			except CouldNotGetMessagesException:
-				p_print(
-					f"Confirmation email not received (attempt {attempt}/{max_attempts}). "
-					"Retrying with a new email address...",
-					Colours.WARNING,
-				)
-				await page.close()
-				continue
+				await type_name(page, credentials)
+				await type_password(page, credentials)
+				await finish_form(page, credentials)
 
-			try:
-				await initial_setup(context, message, credentials)
-				break  # account confirmed successfully
-			except RuntimeError as e:
+				mail = await mail_login(credentials)
+				await asyncio.sleep(1.5)
+				try:
+					message = await get_mail(mail)
+				except CouldNotGetMessagesException:
+					p_print(
+						f"Confirmation email not received (attempt {attempt}/{max_attempts}). "
+						"Retrying with a new email address...",
+						Colours.WARNING,
+					)
+					await page.close()
+					continue
+
+				try:
+					await initial_setup(context, message, credentials)
+					break  # account confirmed successfully
+				except RuntimeError as e:
+					p_print(
+						f"Account confirmation failed ({e}). "
+						f"Retrying with a new email address (attempt {attempt}/{max_attempts})...",
+						Colours.WARNING,
+					)
+					await page.close()
+					continue
+			except Exception as e:
 				p_print(
-					f"Account confirmation failed ({e}). "
+					f"Registration step failed ({e}). "
 					f"Retrying with a new email address (attempt {attempt}/{max_attempts})...",
 					Colours.WARNING,
 				)
-				await page.close()
+				try:
+					await page.close()
+				except Exception:
+					pass
 				continue
-		except Exception as e:
-			p_print(
-				f"Registration step failed ({e}). "
-				f"Retrying with a new email address (attempt {attempt}/{max_attempts})...",
-				Colours.WARNING,
-			)
-			try:
-				await page.close()
-			except Exception:
-				pass
-			continue
+	finally:
+		# Always release the browser, even if we gave up or crashed mid-flow.
+		try:
+			await browser.close()
+		except Exception:
+			pass
 
 	if message is None:
-		await browser.close()
 		p_print(
 			"Gave up registering the account after several attempts.",
 			Colours.FAIL,
 		)
 		sys.exit(1)
-
-	await asyncio.sleep(0.5)
-	await browser.close()
 
 	p_print("Verified account.", Colours.OKGREEN)
 	p_print(
@@ -245,7 +249,10 @@ async def register(
 	save_credentials(credentials, config.accountFormat)
 
 	if console_args.file is not None:
-		file_size = os.path.getsize(console_args.file)
+		try:
+			file_size = os.path.getsize(console_args.file)
+		except OSError:
+			file_size = 0
 		if os.path.exists(console_args.file) and 0 < file_size < 2e10:
 			if file_size >= 5e9:
 				p_print(
@@ -254,13 +261,14 @@ async def register(
 				)
 			upload_file(console_args.public, console_args.file, credentials)
 		else:
-			p_print("File not found.", Colours.FAIL)
+			p_print("File not found or invalid.", Colours.FAIL)
 	if console_args.loop is None or console_args.loop <= 1:
 		sys.exit(0)
 
 
 if __name__ == "__main__":
 	clear_console()
+	set_verbose(console_args.verbose)
 	check_for_updates()
 
 	executable_path, config = setup()

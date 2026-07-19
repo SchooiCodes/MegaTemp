@@ -20,11 +20,21 @@ def read_config() -> Config | None:
 	if not os.path.exists(CONFIG_FILE):
 		return None
 	with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-		if f.read() == "":
-			write_default_config()
-			return None
-		f.seek(0)
-		json_data = json.loads(f.read())
+		raw = f.read()
+	if raw.strip() == "":
+		write_default_config()
+		return None
+	try:
+		json_data = json.loads(raw)
+	except json.JSONDecodeError as e:
+		p_print(f"Config file is corrupted ({e}); ignoring it.", Colours.WARNING)
+		# Back up the broken file so the user can inspect it, then start fresh.
+		try:
+			os.replace(CONFIG_FILE, f"{CONFIG_FILE}.bak")
+		except OSError:
+			pass
+		write_default_config()
+		return None
 
 	for k, v in Config().__dict__.items():
 		if k not in json_data:
@@ -72,26 +82,38 @@ def write_default_config() -> Config | None:
 
 
 def save_credentials(credentials: Credentials, account_format: str) -> None:
-	"""Pass credentials into a file."""
+	"""Pass credentials into a file.
+
+	When `account_format` is set the credentials are appended to a single
+	`accounts.txt` using that template. Otherwise one JSON file per account
+	is written. Filenames are derived from the local part of the email
+	(`user@domain` -> `user`) so they stay valid regardless of the TLD length.
+	"""
 	if not os.path.exists("credentials"):
 		os.mkdir("credentials")
 
 	if account_format != "":
-		account_format = (
+		line = (
 			account_format.replace("{email}", credentials.email)
 			.replace("{password}", credentials.password)
 			.replace("{emailPassword}", credentials.emailPassword)
 			+ "\n"
 		)
-
-		with open("credentials/accounts.txt", "a", encoding="utf-8") as file:
-			file.write(account_format)
-
+		try:
+			with open("credentials/accounts.txt", "a", encoding="utf-8") as file:
+				file.write(line)
+		except OSError as e:
+			p_print(f"Failed to write accounts.txt: {e}", Colours.FAIL)
 		return
 
-	with open(
-		f"credentials/{credentials.email[:-4]}.json", "w", encoding="utf-8"
-	) as file:
-		del credentials.id
-		json_file = json.dumps(asdict(credentials))
-		file.write(json_file)
+	# Build a safe filename from the local part of the email address.
+	local_part = credentials.email.split("@", 1)[0] if credentials.email else "account"
+	safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in local_part)
+
+	try:
+		with open(f"credentials/{safe_name}.json", "w", encoding="utf-8") as file:
+			data = asdict(credentials)
+			data.pop("id", None)
+			file.write(json.dumps(data))
+	except OSError as e:
+		p_print(f"Failed to write credentials file: {e}", Colours.FAIL)

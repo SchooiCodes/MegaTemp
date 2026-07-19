@@ -3,14 +3,15 @@
 import os
 import shutil
 import json
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 import sys
 from mega import Mega
 import psutil
 
 from utilities.types import Colours, Credentials
 
-VERSION = "v1.5.2"
+VERSION = "v1.0.0"
+UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 mega = Mega()
 
 
@@ -32,19 +33,33 @@ def clear_tmp() -> bool:
 
 
 def check_for_updates():
-	"""Checks for updates via latest release tag."""
-	with urlopen(
-		"https://api.github.com/repos/qtchaos/py_mega_account_generator/tags"
-	) as request:
-		json_data = json.loads(request.read().decode())
-		latest_version = json_data[0]["name"]
-		if latest_version == VERSION:
-			return False
+	"""Checks for updates via the latest release tag.
 
-		p_print(
-			f"New version available! Please download it from https://github.com/qtchaos/py_mega_account_generator/releases/tag/{latest_version}",
-			Colours.WARNING,
-		)
+	Network/JSON failures are non-fatal: we simply skip the check so the
+	generator keeps working offline or when GitHub rate-limits the request.
+	"""
+	try:
+		req = Request(UPDATE_URL, headers={"User-Agent": "MegaTemp"})
+		with urlopen(req, timeout=10) as request:
+			json_data = json.loads(request.read().decode())
+	except Exception as e:
+		p_print(f"Could not check for updates ({e}); continuing.", Colours.WARNING)
+		return False
+
+	if not isinstance(json_data, list) or len(json_data) == 0:
+		return False
+
+	latest_version = json_data[0].get("name")
+	if latest_version is None:
+		return False
+	if latest_version == VERSION:
+		return False
+
+	p_print(
+		f"New version available ({latest_version})! Download it from "
+		f"https://github.com/SchooiCodes/MegaTemp/releases/tag/{latest_version}",
+		Colours.WARNING,
+	)
 	return True
 
 
@@ -85,17 +100,34 @@ def reinstall_tenacity():  # sourcery skip: extract-method
 
 
 def kill_process(matches: list):
-	"""Kills processes."""
+	"""Kills processes holding files whose path contains one of `matches`.
+
+	Used to release Chrome's crashpad lock files before clearing tmp. Never
+	kills the current process or its own parents.
+	"""
+	current_pid = os.getpid()
+	killed = False
 	for process in psutil.process_iter():
+		# Never kill ourselves (or we'd abort mid-cleanup).
+		if process.pid == current_pid:
+			continue
 		try:
-			for _ in process.open_files():
-				if any(x in _.path for x in matches):
-					p_print(f"Killing process {process.name()}...", Colours.WARNING)
+			for fh in process.open_files():
+				if any(x in fh.path for x in matches):
+					p_print(
+						f"Killing process {process.name()} (pid {process.pid})...",
+						Colours.WARNING,
+					)
 					process.kill()
-		except (psutil.AccessDenied, psutil.NoSuchProcess):
+					killed = True
+					break
+		except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
 			continue
 
-	p_print("Killed previous instances successfully!", Colours.OKGREEN)
+	if killed:
+		p_print("Killed previous instances successfully!", Colours.OKGREEN)
+	else:
+		p_print("No matching processes to kill.", Colours.OKCYAN)
 
 
 def p_print(
