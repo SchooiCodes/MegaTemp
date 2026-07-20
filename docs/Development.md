@@ -41,6 +41,25 @@ push and pull request (across Python 3.10–3.14).
    account to be created. On failure it raises so the run retries with a fresh
    email.
 
+## Building the executable
+
+A standalone binary (no Python on the target machine) is built with
+PyInstaller via `MegaTemp.spec`:
+
+```bash
+pip install pyinstaller
+pyinstaller MegaTemp.spec --noconfirm --clean
+```
+
+The CI workflow `.github/workflows/build.yml` builds Linux/Windows/macOS
+artifacts automatically. Note: Chromium is **not** bundled — the target machine
+must have a Chromium-based browser installed.
+
+> [!NOTE]
+> `utilities/types.py` shadows the stdlib `types` module, so the PyInstaller
+> spec deliberately does **not** add `utilities`/`services` to `pathex`. Keep it
+> that way or builds will fail with a `MappingProxyType` circular-import error.
+
 ## Contributing
 
 See [CONTRIBUTING.md](https://github.com/SchooiCodes/MegaTemp/blob/master/CONTRIBUTING.md).

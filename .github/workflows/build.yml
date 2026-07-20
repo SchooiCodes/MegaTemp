@@ -1,0 +1,46 @@
+name: Build executable
+
+# Builds a standalone MegaTemp binary (no Python required to run) for Linux,
+# Windows and macOS using PyInstaller, and uploads them as workflow artifacts.
+# NOTE: a Chromium-based browser must still be installed on the target machine.
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: MegaTemp-linux
+            binary: dist/MegaTemp
+          - os: windows-latest
+            artifact: MegaTemp-windows
+            binary: dist/MegaTemp.exe
+          - os: macos-latest
+            artifact: MegaTemp-macos
+            binary: dist/MegaTemp
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build
+        run: pyinstaller MegaTemp.spec --noconfirm --clean
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.binary }}
+          if-no-files-found: error

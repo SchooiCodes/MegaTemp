@@ -12,3 +12,10 @@ credentials.txt
 diagtmp
 *.pyc
 .DS_Store
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+!MegaTemp.spec
+

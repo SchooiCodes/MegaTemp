@@ -53,3 +53,18 @@ python main.py -l 20 -a 8 --export-csv  # mass-generate with summary
 > [!WARNING]
 > Do not combine the services flags (`-e`, `-ka`) with the upload flags
 > (`-f`, `-p`).
+
+## Standalone executable (no Python required)
+
+You can build a single self-contained binary so the program runs on a machine
+that does **not** have Python installed. Chromium is **not** bundled, so the
+target machine still needs a Chromium-based browser.
+
+```bash
+pip install -r requirements.txt pyinstaller
+pyinstaller MegaTemp.spec --noconfirm --clean
+# -> dist/MegaTemp  (Windows: dist/MegaTemp.exe)
+```
+
+Prebuilt binaries for Linux / Windows / macOS are produced automatically by the
+**Build executable** GitHub Actions workflow.
