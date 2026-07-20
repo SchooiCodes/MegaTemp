@@ -11,7 +11,7 @@ import psutil
 
 from utilities.types import Colours, Credentials
 
-VERSION = "v1.0.0"
+VERSION = "v1.1.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 mega = Mega()
 
