@@ -5,6 +5,7 @@ we drive a raw terminal directly with ANSI escape codes so it works in any
 Linux terminal, tmux/screen session or SSH connection.
 """
 
+import os
 import sys
 import tty
 import termios
@@ -12,10 +13,12 @@ import select
 
 from utilities.etc import Colours, p_print
 
-UP = "\x1b[A"
-DOWN = "\x1b[B"
-LEFT = "\x1b[D"
-RIGHT = "\x1b[C"
+# Arrow keys arrive as either normal-mode (\x1b[A) or application-cursor-mode
+# (\x1bOA) sequences depending on the terminal; accept both.
+UP = ("\x1b[A", "\x1bOA")
+DOWN = ("\x1b[B", "\x1bOB")
+LEFT = ("\x1b[D", "\x1bOD")
+RIGHT = ("\x1b[C", "\x1bOC")
 ENTER = "\r"
 ESCAPE = "\x1b"
 
@@ -99,26 +102,33 @@ class Menu:
 		self._full_redraw = True
 
 	@staticmethod
-	def _read_escape() -> str:
-		"""Read an arrow/escape sequence without blocking on a lone Esc."""
-		# After the initial \x1b, only consume more bytes if they arrive
-		# promptly; otherwise treat the key as a standalone Escape.
-		ready, _, _ = select.select([sys.stdin], [], [], 0.15)
-		if not ready:
-			return ESCAPE
-		seq = sys.stdin.read(2)
-		return ESCAPE + seq
+	def _get_key():
+		"""Read a single key press.
 
-	def _get_key(self):
-		"""Read a single key (handles escape sequences for arrows)."""
+		Uses raw `os.read` on the terminal fd (not the buffered TextIOWrapper)
+		so escape sequences are captured byte-accurately. Arrow keys arrive as
+		a 3-byte sequence starting with \\x1b (either `\\x1b[A`/`\\x1b[B` in
+		normal mode or `\\x1bOA`/`\\x1bOB` in application-cursor mode); a lone
+		\\x1b with no following bytes within a short window is treated as Esc.
+		"""
 		fd = sys.stdin.fileno()
 		old = termios.tcgetattr(fd)
 		try:
 			tty.setraw(fd)
-			ch = sys.stdin.read(1)
-			if ch == ESCAPE:
-				return self._read_escape()
-			return ch
+			first = os.read(fd, 1)
+			if first != b"\x1b":
+				return first.decode("utf-8", "replace")
+			# Could be an arrow sequence or a standalone Escape key.
+			ready, _, _ = select.select([fd], [], [], 0.3)
+			if not ready:
+				return ESCAPE
+			rest = b""
+			while len(rest) < 2:
+				chunk = os.read(fd, 2 - len(rest))
+				if not chunk:
+					break
+				rest += chunk
+			return (b"\x1b" + rest).decode("utf-8", "replace")
 		finally:
 			termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
@@ -183,13 +193,13 @@ class Menu:
 		while True:
 			self._render()
 			key = self._get_key()
-			if key == UP:
+			if key in UP:
 				self.selected = (self.selected - 1) % len(self.items)
 				self._full_redraw = False
-			elif key == DOWN:
+			elif key in DOWN:
 				self.selected = (self.selected + 1) % len(self.items)
 				self._full_redraw = False
-			elif key in (ENTER, RIGHT):
+			elif key in (ENTER, *RIGHT):
 				item = self.items[self.selected]
 				if item.callback is None:
 					continue
