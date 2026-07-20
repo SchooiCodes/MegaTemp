@@ -40,6 +40,16 @@ from utilities.etc import (
 	delete_default,
 	separator,
 	elapsed,
+	VERSION,
+)
+from utilities.menu import (
+	Menu,
+	MenuItem,
+	_BACK,
+	prompt_text,
+	prompt_int,
+	prompt_yes_no,
+	pause,
 )
 
 # Harmless pyppeteer teardown noise: after we close the browser, pyppeteer's
@@ -371,6 +381,220 @@ async def register(
 		sys.exit(0)
 
 
+# --------------------------------------------------------------------------- #
+# Interactive TUI
+# --------------------------------------------------------------------------- #
+# Runtime settings that the menu can toggle. They feed directly into register().
+_SETTINGS = {
+	"attempts": 4,
+	"visible": False,
+	"export_csv": False,
+}
+
+
+def _action_create_one(executable_path, config):
+	"""Create a single account."""
+	clear_tmp()
+	try:
+		asyncio.run(
+			register(
+				None,
+				executable_path,
+				config,
+				visible=_SETTINGS["visible"],
+				max_attempts=_SETTINGS["attempts"],
+				export_csv=_SETTINGS["export_csv"],
+			)
+		)
+	except SystemExit:
+		pass
+	pause("Press Enter to return to the menu...")
+
+
+def _action_loop_create(executable_path, config):
+	"""Prompt for a count, then loop-create."""
+	clear_tmp()
+	count = prompt_int("How many accounts to create", 5, 1, 1000)
+	loop_registrations(
+		count,
+		executable_path,
+		config,
+		visible=_SETTINGS["visible"],
+		max_attempts=_SETTINGS["attempts"],
+		export_csv=_SETTINGS["export_csv"],
+	)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_view_credentials(config):
+	"""List saved credentials with file size and a masked password."""
+	import json
+
+	folder = "./credentials"
+	if not os.path.isdir(folder):
+		p_print("No credentials folder found.", Colours.WARNING)
+		pause()
+		return
+
+	json_files = [f for f in os.listdir(folder) if f.endswith(".json")]
+	if not json_files:
+		p_print("No saved credentials yet.", Colours.WARNING)
+		pause()
+		return
+
+	separator(f"Saved credentials ({len(json_files)})", Colours.HEADER)
+	for f in sorted(json_files):
+		path = os.path.join(folder, f)
+		try:
+			with open(path, "r", encoding="utf-8") as fh:
+				data = json.load(fh)
+		except (json.JSONDecodeError, OSError):
+			p_print(f"  ! {f} (unreadable)", Colours.WARNING)
+			continue
+		email = data.get("email", "?")
+		pw = data.get("password", "")
+		masked = ("*" * max(len(pw) - 2, 0)) + pw[-2:] if pw else "?"
+		size = os.path.getsize(path)
+		p_print(f"  {email:<38} pw:{masked:<14} {size}B", Colours.OKCYAN)
+	pause()
+
+
+def _action_export(config):
+	"""Export saved credentials to a flat file."""
+	p_print("Exporting credentials ...", Colours.HEADER)
+	extract_credentials(config.accountFormat)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_keepalive(config):
+	"""Keep all saved accounts alive."""
+	p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)
+	keepalive(console_args.verbose)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_upload(executable_path, config):
+	"""Prompt for a file and (optional) public link, then upload."""
+	_ = executable_path
+	path = prompt_text("Path to file to upload")
+	if not path or not os.path.exists(path):
+		p_print("File not found.", Colours.FAIL)
+		pause()
+		return
+	public = prompt_yes_no("Generate a public share link?")
+	# Upload needs an account; reuse the most recently created credential.
+	import glob
+	import json
+
+	jsons = sorted(
+		glob.glob("./credentials/*.json"), key=os.path.getmtime, reverse=True
+	)
+	if not jsons:
+		p_print("No saved credentials to upload with.", Colours.FAIL)
+		pause()
+		return
+	with open(jsons[0], "r", encoding="utf-8") as fh:
+		data = json.load(fh)
+	creds = Credentials(
+		data.get("email", ""), data.get("emailPassword", ""), data.get("password", "")
+	)
+	upload_file(public, path, creds)
+	pause("Press Enter to return to the menu...")
+
+
+def _build_settings_menu():
+	"""Submenu for toggling runtime settings."""
+	items = [
+		MenuItem(
+			"Max Attempts",
+			lambda: _set_attempts(),
+			"Registration retries before giving up",
+			value=lambda: str(_SETTINGS["attempts"]),
+		),
+		MenuItem(
+			"Visible Browser",
+			lambda: _toggle("visible"),
+			"Show the Chromium window while working",
+			value=lambda: "Yes" if _SETTINGS["visible"] else "No",
+		),
+		MenuItem(
+			"Auto CSV Export",
+			lambda: _toggle("export_csv"),
+			"Also write each account to accounts.csv",
+			value=lambda: "Yes" if _SETTINGS["export_csv"] else "No",
+		),
+		MenuItem("Back", lambda: _BACK, "Return to the main menu"),
+	]
+	return Menu("Settings", items)
+
+
+def _set_attempts():
+	val = prompt_int("Max registration attempts", _SETTINGS["attempts"], 1, 50)
+	_SETTINGS["attempts"] = val
+	pause("Press Enter to return to the menu...")
+
+
+def _toggle(key):
+	_SETTINGS[key] = not _SETTINGS[key]
+	pause("Press Enter to return to the menu...")
+
+
+def _run_tui(executable_path, config):
+	"""Main interactive loop: shows the menu and dispatches selections."""
+	while True:
+		items = [
+			MenuItem(
+				"Create Account",
+				lambda: _action_create_one(executable_path, config),
+				"Register a single mega.nz account",
+			),
+			MenuItem(
+				"Loop Create",
+				lambda: _action_loop_create(executable_path, config),
+				"Create many accounts in a row",
+			),
+			MenuItem(
+				"View Credentials",
+				lambda: _action_view_credentials(config),
+				"List every saved account",
+			),
+			MenuItem(
+				"Export Credentials",
+				lambda: _action_export(config),
+				"Write accounts to credentials.txt",
+			),
+			MenuItem(
+				"Keep Alive Accounts",
+				lambda: _action_keepalive(config),
+				"Log in to every account to keep it active",
+			),
+			MenuItem(
+				"Upload File",
+				lambda: _action_upload(executable_path, config),
+				"Upload a file to the latest account",
+			),
+			MenuItem(
+				"Settings",
+				lambda: _open_settings(),
+				"Attempts, visible mode, CSV export",
+			),
+			MenuItem("Exit", lambda: _BACK, "Quit MegaTemp"),
+		]
+		menu = Menu(f"MegaTemp {VERSION}", items)
+		result = menu.run()
+		if result is _BACK:
+			break
+
+
+def _open_settings():
+	"""Open the settings submenu; returns to main menu afterwards."""
+	while True:
+		sub = _build_settings_menu()
+		result = sub.run()
+		if result is _BACK:
+			break
+
+
 if __name__ == "__main__":
 	set_verbose(console_args.verbose)
 	check_for_updates()
@@ -395,7 +619,16 @@ if __name__ == "__main__":
 			console_args.attempts,
 			console_args.export_csv,
 		)
-	else:
+	elif any(
+		[
+			console_args.file,
+			console_args.visible,
+			console_args.attempts != 4,
+			console_args.export_csv,
+			console_args.verbose,
+		]
+	):
+		# Headless / scripted invocation with explicit flags.
 		clear_tmp()
 		asyncio.run(
 			register(
@@ -407,3 +640,6 @@ if __name__ == "__main__":
 				export_csv=console_args.export_csv,
 			)
 		)
+	else:
+		# No flags -> launch the interactive TUI.
+		_run_tui(executable_path, config)
