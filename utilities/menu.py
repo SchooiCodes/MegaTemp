@@ -18,6 +18,13 @@ RIGHT = "\x1b[C"
 ENTER = "\r"
 ESCAPE = "\x1b"
 
+_ANSI_RE = __import__("re").compile(r"\x1b\[[0-9;]*m")
+
+
+def _visible_len(text: str) -> int:
+	"""Length of `text` ignoring ANSI colour escape sequences."""
+	return len(_ANSI_RE.sub("", text))
+
 
 class MenuItem:
 	"""A single selectable entry in a menu."""
@@ -103,7 +110,8 @@ class Menu:
 			label = item.label
 			value = item.get_value()
 			if value:
-				gap = w - len(label) - len(value) - 1
+				# Pad by visible width (ANSI codes are zero-width on screen).
+				gap = w - _visible_len(pointer) - _visible_len(label) - _visible_len(value) - 1
 				if gap < 1:
 					gap = 1
 				row = f"{pointer}{label}{' ' * gap}{value}"
@@ -111,7 +119,13 @@ class Menu:
 				row = f"{pointer}{label}"
 			if idx == self.selected:
 				row = f"{Colours.OKGREEN}{row}{Colours.ENDC}"
-			lines.append(f"{ml} {row.ljust(w)} {mr}")
+			# Pad by visible width so ANSI colour codes don't shift the
+			# right-hand border out of alignment.
+			pad = w - _visible_len(row)
+			if pad < 0:
+				pad = 0
+			row = f"{row}{' ' * pad}"
+			lines.append(f"{ml} {row} {mr}")
 
 		lines.append(f"{mls}{self._bar(hbar)}{mrs}")
 		desc = self.items[self.selected].description
