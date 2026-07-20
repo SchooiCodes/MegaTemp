@@ -7,6 +7,12 @@ OUTPUT_FILE = "credentials.txt"
 
 
 def extract_credentials(account_format: str = "{email}#{password}"):
+	# An empty format (the default in config.json) means "use the default
+	# text template" rather than writing blank lines, mirroring the JSON
+	# per-account default used by save_credentials.
+	if not account_format:
+		account_format = "{email}#{password}"
+
 	if not os.path.isdir(CREDENTIALS_FOLDER):
 		p_print("No credentials folder found, nothing to extract.", Colours.FAIL)
 		return
