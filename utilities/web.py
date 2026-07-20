@@ -24,7 +24,13 @@ def set_verbose(value: bool) -> None:
 	_VERBOSE = value
 
 
+def _step(text, colour=Colours.HEADER):
+	"""Always-on phase marker so the user can follow the flow."""
+	p_print(text, colour)
+
+
 def _log(text, colour=Colours.OKCYAN):
+	"""Verbose-only detail line (only shown with -v)."""
 	if _VERBOSE:
 		p_print(text, colour)
 
@@ -95,92 +101,111 @@ async def initial_setup(context, message, credentials):
 	# Email bodies are HTML-escaped, so '&' becomes '&amp;' and the link is
 	# unusable until we decode it back.
 	confirm_link = html.unescape(confirm_links[0])
-	_log(f"Confirmation link: {confirm_link}")
+	_step("[confirm] opening confirmation link ...", Colours.HEADER)
+	_log(f"[confirm] link: {confirm_link}")
 
 	confirm_page = await context.newPage()
-	await confirm_page.goto(confirm_link)
+	try:
+		await confirm_page.goto(confirm_link)
 
-	password_selectors = ["#login-password2", "#confirm-password2", "#password"]
-	password_field = None
-	for sel in password_selectors:
-		try:
-			await confirm_page.waitForSelector(sel, timeout=10000)
-			password_field = sel
-			break
-		except Exception:
-			continue
-
-	if password_field is None:
-		dom = await confirm_page.content()
-		p_print(
-			"Could not find a password field on the confirm page. Dumping DOM.",
-			Colours.WARNING,
-		)
-		p_print(dom[:2000], Colours.WARNING)
-		raise RuntimeError("Confirm page password field not found.")
-
-	await _robust_type(confirm_page, password_field, credentials.password)
-
-	# The confirm page's submit button has the text "Confirm". Click the
-	# visible one specifically (the login template also has a .login-button).
-	clicked = await confirm_page.evaluate(
-		"""() => {
-			const btns = Array.from(document.querySelectorAll('button'));
-			const b = btns.find(
-				x => x.innerText.trim() === 'Confirm' && x.offsetParent !== null
-			);
-			if (b) { b.click(); return true; }
-			return false;
-		}"""
-	)
-	if not clicked:
-		submit_selectors = [".login-button", ".register-button", "#login-button2"]
-		for sel in submit_selectors:
+		password_selectors = ["#login-password2", "#confirm-password2", "#password"]
+		password_field = None
+		for sel in password_selectors:
 			try:
 				await confirm_page.waitForSelector(sel, timeout=10000)
-				await confirm_page.click(sel)
+				password_field = sel
 				break
 			except Exception:
 				continue
 
-	# The account is only truly created once MEGA leaves the confirm page.
-	# Wait for the URL to change away from "confirm" (success lands on the
-	# recovery-key / 2FA screen, "#key") or for an error to surface. If we
-	# stay on the confirm page, the password did not match -> raise so the
-	# caller retries with a fresh email instead of saving dead credentials.
-	try:
-		await confirm_page.waitForFunction(
-			"() => !location.href.includes('confirm')",
-			timeout=30000,
-		)
-	except Exception:
-		# Still on the confirm page after 30s: surface any visible error text.
-		errors = await confirm_page.evaluate(
-			"""() => Array.from(
-				document.querySelectorAll('.error,.warning,.msg,.input-error,.toast,.notification')
-			).map(e => e.innerText.trim()).filter(Boolean)"""
-		)
-		raise RuntimeError(
-			"Account confirmation did not complete (still on confirm page). "
-			f"Visible errors: {errors}"
-		) from None
+		if password_field is None:
+			dom = await confirm_page.content()
+			p_print(
+				"Could not find a password field on the confirm page. Dumping DOM.",
+				Colours.WARNING,
+			)
+			p_print(dom[:2000], Colours.WARNING)
+			raise RuntimeError("Confirm page password field not found.")
 
-	# Dismiss the recovery-key / 2FA setup screen by clicking "Later" if it
-	# is shown, so a brand-new browser session starts at the login screen.
-	try:
-		await confirm_page.waitForSelector(
-			".dialog-download-recovery-key", timeout=5000
-		)
-		await confirm_page.evaluate(
+		_step(f"[confirm] typing password into {password_field} ...", Colours.HEADER)
+		await _robust_type(confirm_page, password_field, credentials.password)
+
+		# The confirm page's submit button has the text "Confirm". Click the
+		# visible one specifically (the login template also has a .login-button).
+		_step("[confirm] clicking 'Confirm' ...", Colours.HEADER)
+		clicked = await confirm_page.evaluate(
 			"""() => {
-				const b = Array.from(document.querySelectorAll('button')).find(
-					x => /later|skip/i.test(x.innerText) && x.offsetParent !== null
+				const btns = Array.from(document.querySelectorAll('button'));
+				const b = btns.find(
+					x => x.innerText.trim() === 'Confirm' && x.offsetParent !== null
 				);
-				if (b) b.click();
+				if (b) { b.click(); return true; }
+				return false;
 			}"""
 		)
-	except Exception:
-		pass
+		if not clicked:
+			submit_selectors = [".login-button", ".register-button", "#login-button2"]
+			for sel in submit_selectors:
+				try:
+					await confirm_page.waitForSelector(sel, timeout=10000)
+					await confirm_page.click(sel)
+					break
+				except Exception:
+					continue
+			_log("[confirm] used fallback submit selector.")
+
+		# The account is only truly created once MEGA leaves the confirm page.
+		# Wait for the URL to change away from "confirm" (success lands on the
+		# recovery-key / 2FA screen, "#key") or for an error to surface. If we
+		# stay on the confirm page, the password did not match -> raise so the
+		# caller retries with a fresh email instead of saving dead credentials.
+		_step("[confirm] waiting for account creation ...", Colours.HEADER)
+		try:
+			await confirm_page.waitForFunction(
+				"() => !location.href.includes('confirm')",
+				timeout=30000,
+			)
+		except Exception:
+			# Still on the confirm page after 30s: surface any visible error text.
+			errors = await confirm_page.evaluate(
+				"""() => Array.from(
+					document.querySelectorAll('.error,.warning,.msg,.input-error,.toast,.notification')
+				).map(e => e.innerText.trim()).filter(Boolean)"""
+			)
+			raise RuntimeError(
+				"Account confirmation did not complete (still on confirm page). "
+				f"Visible errors: {errors}"
+			) from None
+
+		_step(
+			f"[confirm] account created (final URL: {confirm_page.url})",
+			Colours.OKGREEN,
+		)
+
+		# Dismiss the recovery-key / 2FA setup screen by clicking "Later" if it
+		# is shown, so a brand-new browser session starts at the login screen.
+		try:
+			await confirm_page.waitForSelector(
+				".dialog-download-recovery-key", timeout=5000
+			)
+			_step("[confirm] dismissing recovery-key prompt ...", Colours.HEADER)
+			await confirm_page.evaluate(
+				"""() => {
+					const b = Array.from(document.querySelectorAll('button')).find(
+						x => /later|skip/i.test(x.innerText) && x.offsetParent !== null
+					);
+					if (b) b.click();
+				}"""
+			)
+		except Exception:
+			pass
+	finally:
+		# Always close the confirmation tab so incognito pages don't pile up
+		# across retries.
+		try:
+			await confirm_page.close()
+		except Exception:
+			pass
 
 
 async def mail_login(credentials: Credentials):
@@ -195,11 +220,11 @@ async def mail_login(credentials: Credentials):
 			mail = pymailtm.Account(
 				credentials.id, credentials.email, credentials.emailPassword
 			)
-			p_print("Retrieved mail successfully!", Colours.OKGREEN)
+			_step(f"[mail] logged into mailbox {credentials.email}", Colours.OKGREEN)
 			return mail
 		except CouldNotGetAccountException:
 			p_print(
-				f"Mail login failed, retrying ({attempt}/{max_retries})...",
+				f"[mail] login failed, retrying ({attempt}/{max_retries})...",
 				Colours.WARNING,
 			)
 			await asyncio.sleep(min(attempt, 5))
@@ -214,14 +239,15 @@ async def get_mail(mail, max_attempts: int = 80):
 
 	max_attempts * 1.5s sleep ≈ 90s of polling before giving up.
 	"""
+	_step("[mail] polling for MEGA's confirmation email ...", Colours.HEADER)
 	for attempt in range(1, max_attempts + 1):
 		try:
 			message = mail.get_messages()[0]
-			p_print("Found mail!", Colours.OKGREEN)
+			_step("[mail] confirmation email received.", Colours.OKGREEN)
 			return message
 		except (IndexError, CouldNotGetMessagesException):
 			p_print(
-				f"Failed to find mail... trying again ({attempt}/{max_attempts}).",
+				f"[mail] no email yet, retrying ({attempt}/{max_attempts})...",
 				Colours.WARNING,
 			)
 			await asyncio.sleep(1.5)
@@ -235,15 +261,34 @@ async def type_name(page: pyppeteer.page.Page, credentials: Credentials):
 	"""Types name and email into the register fields."""
 	name = str(fake.name()).split(" ", 2)
 	firstname = name[0]
+	_step("[register] opening mega.nz/register ...", Colours.HEADER)
 	await page.goto("https://mega.nz/register")
-	await page.waitForSelector("#register-firstname")
+
+	try:
+		await page.waitForSelector("#register-firstname", timeout=45000)
+	except Exception:
+		# MEGA serves a near-empty shell when it rate-limits / blocks an IP
+		# or detects automation: the JS app never mounts the form. Detect
+		# that early so we don't burn every retry on a silent timeout.
+		html_len = await page.evaluate("() => document.body.innerHTML.length")
+		text = await page.evaluate("() => document.body.innerText.slice(0, 200)")
+		raise RuntimeError(
+			"MEGA registration form did not render. MEGA often serves an empty "
+			"page when it rate-limits or blocks an IP/automated browser "
+			"(body length "
+			f"{html_len}, text={text!r}). Try again later or from a different "
+			"network/exit node."
+		) from None
+
 	await page.waitForSelector("#register-email")
 	# The firstname field is a plain input; page.type is fine here.
 	await page.type("#register-firstname", firstname)
+	_log(f"[register] firstname: {firstname}")
 	# The email field is also a custom MEGA input that can drop the first
 	# character, so type it robustly and verify before submitting.
 	await _robust_type(page, "#register-email", credentials.email)
-	_log(f"Registered with email: {credentials.email}")
+	_log(f"[register] typed email: {credentials.email}")
+	_step("[register] name + email filled in.", Colours.OKBLUE)
 
 
 async def finish_form(page: pyppeteer.page.Page, credentials: Credentials):
@@ -251,9 +296,11 @@ async def finish_form(page: pyppeteer.page.Page, credentials: Credentials):
 	try:
 		await page.waitForSelector(".privacy-check", timeout=5000)
 		await page.click(".privacy-check", {"force": True})
+		_log("[register] accepted privacy check.")
 	except Exception:
-		pass
+		_log("[register] no privacy check shown (skipped).")
 	await page.waitForSelector(".register-button")
+	_step("[register] submitting registration form ...", Colours.HEADER)
 	await page.click(".register-button")
 
 
@@ -265,6 +312,7 @@ async def type_password(page: pyppeteer.page.Page, credentials: Credentials):
 	makes confirmation fail with "Invalid password" and yields dead accounts,
 	so we type through `_robust_type` (which primes, clears and verifies).
 	"""
+	_step("[register] typing account password ...", Colours.HEADER)
 	await _robust_type(page, "#register-password", credentials.password)
 	p_print("Registered account successfully!", Colours.OKGREEN)
 
@@ -272,20 +320,28 @@ async def type_password(page: pyppeteer.page.Page, credentials: Credentials):
 async def generate_mail() -> Credentials:
 	"""Generate mail.tm account and return account credentials."""
 	mail = pymailtm.MailTm()
-	try_count = 0
-
-	while True:
+	max_retries = 30
+	for attempt in range(1, max_retries + 1):
 		try:
 			account = mail.get_account()
 			break
 		except CouldNotGetAccountException:
-			p_print("Retrying mail.tm account generation...", Colours.WARNING)
-			try_count += 1
-			await asyncio.sleep(try_count)
+			_step(
+				f"[mail] generating mail.tm address (attempt {attempt}/{max_retries})...",
+				Colours.WARNING,
+			)
+			await asyncio.sleep(min(attempt, 5))
+	else:
+		raise CouldNotGetAccountException(
+			"Could not create a mail.tm account after several attempts."
+		)
 
 	credentials = Credentials()
 	credentials.email = account.address
 	credentials.emailPassword = account.password
 	credentials.password = get_random_string(14)
 	credentials.id = account.id_
+
+	_step(f"[mail] generated address: {credentials.email}", Colours.OKBLUE)
+	_log(f"[mail] mailbox password: {credentials.emailPassword}")
 	return credentials

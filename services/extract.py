@@ -11,33 +11,40 @@ def extract_credentials(account_format: str = "{email}#{password}"):
 		p_print("No credentials folder found, nothing to extract.", Colours.FAIL)
 		return
 
+	json_files = [
+		f
+		for f in os.listdir(CREDENTIALS_FOLDER)
+		if f.endswith(".json") and os.path.isfile(os.path.join(CREDENTIALS_FOLDER, f))
+	]
+	p_print(f"Extracting {len(json_files)} account(s)...", Colours.OKCYAN)
+
 	with open(OUTPUT_FILE, "w") as output_file:
-		for file in os.listdir(CREDENTIALS_FOLDER):
+		for file in json_files:
 			file_path = os.path.join(CREDENTIALS_FOLDER, file)
 
-			if os.path.isfile(file_path) and file.endswith(".json"):
-				with open(file_path, "r") as json_file:
-					try:
-						data = json.load(json_file)
-					except json.JSONDecodeError:
-						p_print(
-							f"Failed to parse JSON file: {file}, skipping...",
-							Colours.WARNING,
-						)
-						continue
+			with open(file_path, "r") as json_file:
+				try:
+					data = json.load(json_file)
+				except json.JSONDecodeError:
+					p_print(
+						f"Failed to parse JSON file: {file}, skipping...",
+						Colours.WARNING,
+					)
+					continue
 
-				email = data.get("email", "")
-				password = data.get("password", "")
-				emailPassword = data.get("emailPassword", "")
+			email = data.get("email", "")
+			password = data.get("password", "")
+			emailPassword = data.get("emailPassword", "")
 
-				# Replace placeholders in the account_format string with actual values
-				output = (
-					account_format.replace("{email}", email)
-					.replace("{password}", password)
-					.replace("{emailPassword}", emailPassword)
-				)
+			# Replace placeholders in the account_format string with actual values
+			output = (
+				account_format.replace("{email}", email)
+				.replace("{password}", password)
+				.replace("{emailPassword}", emailPassword)
+			)
 
-				output_file.write(f"{output}\n")
+			output_file.write(f"{output}\n")
+			p_print(f"  + {email}", Colours.OKCYAN)
 
 	p_print("Data extraction and writing complete!", Colours.OKGREEN)
 	p_print(f"Output saved to: {os.path.abspath(OUTPUT_FILE)}", Colours.OKGREEN)

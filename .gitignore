@@ -8,7 +8,3 @@ config.json
 credentials.txt
 .ruff_cache
 .mypy_cache
-.pymailtm
-diagtmp
-*.pyc
-.DS_Store

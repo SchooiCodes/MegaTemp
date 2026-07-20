@@ -47,6 +47,38 @@ if sys.version_info.major == 3 and sys.version_info.minor <= 11:
 	except AttributeError:
 		reinstall_tenacity()
 
+
+# Harmless pyppeteer teardown noise: after we close the browser, pyppeteer's
+# connection may still have in-flight CDP messages whose futures resolve with a
+# NetworkError ("Target closed." / "No session with given id"). asyncio's GC
+# then logs them as "Future exception was never retrieved". These are not real
+# errors, so we swallow exactly those while letting anything else through.
+_HARMLESS_ASYNC_ERRORS = ("Target closed", "No session with given id")
+
+
+def _quiet_async_exceptions(loop, context):
+	"""asyncio exception handler that hides benign pyppeteer teardown errors.
+
+	"Future exception was never retrieved" GC messages carry the real error
+	inside context["future"], not context["exception"], so we inspect the
+	future's own exception as well before deciding to suppress.
+	"""
+	exception = context.get("exception")
+	message = context.get("message", "")
+
+	future = context.get("future")
+	future_exc = None
+	if future is not None:
+		try:
+			future_exc = future.exception()
+		except Exception:
+			future_exc = None
+
+	text = f"{exception} {message} {future_exc}"
+	if any(marker in text for marker in _HARMLESS_ASYNC_ERRORS):
+		return
+	loop.default_exception_handler(context)
+
 default_installs = [
 	"C:/Program Files/Google/Chrome/Application/chrome.exe",
 	"C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
@@ -161,6 +193,10 @@ async def register(
 	max_attempts = 4
 	message = None
 
+	# Silence benign pyppeteer teardown warnings emitted during browser close.
+	asyncio.get_running_loop().set_exception_handler(_quiet_async_exceptions)
+
+	p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
 	browser = await pyppeteer.launch(
 		{
 			"headless": True,
@@ -177,6 +213,10 @@ async def register(
 
 	try:
 		for attempt in range(1, max_attempts + 1):
+			p_print(
+				f"=== Registration attempt {attempt}/{max_attempts} ===",
+				Colours.HEADER,
+			)
 			credentials = await generate_mail()
 			page = await context.newPage()
 			try:
@@ -246,6 +286,7 @@ async def register(
 			f"Warning: could not remove the default welcome file: {e}",
 			Colours.WARNING,
 		)
+	p_print("Saving credentials ...", Colours.HEADER)
 	save_credentials(credentials, config.accountFormat)
 
 	if console_args.file is not None:
@@ -263,6 +304,7 @@ async def register(
 		else:
 			p_print("File not found or invalid.", Colours.FAIL)
 	if console_args.loop is None or console_args.loop <= 1:
+		p_print("Done.", Colours.OKGREEN)
 		sys.exit(0)
 
 
@@ -277,8 +319,10 @@ if __name__ == "__main__":
 		sys.exit(1)
 
 	if console_args.extract:
+		p_print("Extracting credentials to credentials.txt ...", Colours.HEADER)
 		extract_credentials(config.accountFormat)
 	elif console_args.keepalive:
+		p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)
 		keepalive(console_args.verbose)
 	elif console_args.loop is not None and console_args.loop > 1:
 		loop_registrations(console_args.loop, executable_path, config)

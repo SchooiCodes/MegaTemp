@@ -29,6 +29,7 @@ def keepalive(verbose: bool):
 		)
 		return
 
+	p_print(f"Checking {len(files)} saved account(s)...", Colours.OKCYAN)
 	i = 0
 	for file in files:
 		path = f"./credentials/{file}"
