@@ -415,14 +415,19 @@ def _action_loop_create(executable_path, config):
 	"""Prompt for a count, then loop-create."""
 	clear_tmp()
 	count = prompt_int("How many accounts to create", 5, 1, 1000)
-	loop_registrations(
-		count,
-		executable_path,
-		config,
-		visible=_SETTINGS["visible"],
-		max_attempts=_SETTINGS["attempts"],
-		export_csv=_SETTINGS["export_csv"],
-	)
+	try:
+		loop_registrations(
+			count,
+			executable_path,
+			config,
+			visible=_SETTINGS["visible"],
+			max_attempts=_SETTINGS["attempts"],
+			export_csv=_SETTINGS["export_csv"],
+		)
+	except SystemExit:
+		# loop_registrations calls sys.exit(0) at the end (for CLI mode);
+		# swallow it so we return to the menu instead of quitting.
+		pass
 	pause("Press Enter to return to the menu...")
 
 
@@ -452,6 +457,8 @@ def _action_view_credentials(config):
 			p_print(f"  ! {f} (unreadable)", Colours.WARNING)
 			continue
 		email = data.get("email", "?")
+		if len(email) > 38:
+			email = email[:35] + "..."
 		pw = data.get("password", "")
 		masked = ("*" * max(len(pw) - 2, 0)) + pw[-2:] if pw else "?"
 		size = os.path.getsize(path)
