@@ -1,0 +1,44 @@
+name: Release
+
+# Builds the project and attaches the source tree to every GitHub release so a
+# published tag is always downloadable as a ready-to-run bundle.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify lint passes
+        run: |
+          pip install ruff
+          ruff check .
+          ruff format --check .
+      - name: Package source (without local/secret artifacts)
+        run: |
+          mkdir -p dist
+          # Exclude venv, credentials, built/temp artifacts.
+          tar --exclude-vcs \
+              --exclude='venv' --exclude='.venv' \
+              --exclude='credentials' --exclude='credentials.txt' \
+              --exclude='tmp' --exclude='diagtmp' \
+              --exclude='__pycache__' --exclude='*.pyc' \
+              --exclude='.ruff_cache' --exclude='.mypy_cache' \
+              --exclude='.idea' \
+              -czf "dist/MegaTemp-${GITHUB_REF_NAME}-src.tar.gz" .
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            "dist/MegaTemp-${GITHUB_REF_NAME}-src.tar.gz"

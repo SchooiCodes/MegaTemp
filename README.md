@@ -36,7 +36,10 @@ This fork focuses on:
   flow silently created dead accounts — see *How it works* below).
 - Robustness fixes for modern Python (3.11+), `tenacity` and `pymailtm`
   compatibility, and headless Chromium on Linux.
-- Cleaner repository hygiene (license, code of conduct, contributing guide).
+- A friendly interactive **terminal menu** (arrow-key navigation) for everyday
+  use, plus a full **CLI** for scripting.
+- Cleaner repository hygiene (license, code of conduct, contributing guide,
+  security policy, issue/PR templates).
 
 MegaTemp is distributed under the same **GPL-3.0** license as the upstream
 project, in compliance with the GPL.
@@ -45,18 +48,28 @@ project, in compliance with the GPL.
 
 ## Features
 
+- 🖥️ **Interactive menu** — run `python main.py` with no arguments to get an
+  arrow-key driven TUI: create accounts, loop-create, view/export credentials,
+  keep accounts alive, upload files, and tweak settings.
 - 🪄 **One-command account generation** — `python main.py` spits out a working
   MEGA account and saves its credentials.
 - 📧 **Disposable email** — uses [mail.tm](https://mail.tm) so no real inbox is
   required; confirmation links are fetched automatically.
 - 🌐 **Headless browser** — drives MEGA's sign-up SPA with Pyppeteer +
   Chromium (or any Chromium-based browser).
+- 👁️ **Visible mode** — pass `-sh` / `--visible` to watch the browser do its
+  thing instead of running headless.
 - 📤 **File upload + public links** — upload a file to each new account and get
   a shareable link (`-f`, `-p`).
 - 🔁 **Loops** — generate or upload as many times as you want (`-l`).
 - 💤 **Keepalive** — log into every saved account to keep it from being purged
   (`-ka`).
-- 📝 **Custom credential formats** — control exactly how credentials are saved.
+- 📝 **Custom credential formats** — control exactly how credentials are saved,
+  or export every account to `credentials/accounts.csv` (`--export-csv`).
+- 🔧 **Configurable attempts** — `-a N` / `--attempts N` caps how many times a
+  registration retries with a fresh email before giving up (default 4).
+- 📊 **Loop summary** — mass-generation prints success/failure counts, total
+  elapsed time, and average per account.
 
 ---
 
@@ -103,59 +116,111 @@ For example, on many Linux systems:
 If `executablePath` is left empty, the program will prompt you for it on first
 run.
 
+> [!TIP]
+> On Linux you almost always need `--no-sandbox`. MegaTemp already adds the
+> required Chromium flags (`--no-sandbox`, `--disable-setuid-sandbox`, …) for
+> you, so a plain `executablePath` is enough.
+
 ---
 
 ## Usage
 
-Run it with no arguments to generate a single account:
+### Interactive menu (default)
+
+Run it with **no arguments** to open the terminal menu:
 
 ```bash
 python main.py
 ```
 
-The credentials are printed to the console and written to the `credentials/`
-folder.
+Use the **↑ / ↓** arrows to move the selection, **Enter** to choose, **Esc** to
+go back / exit, and the **← / →** arrows inside the *Settings* submenu to
+toggle options.
 
-### Uploading a file
+```
+MegaTemp v1.1.0
+┌────────────────────────────────────────┐
+│ > Create Account                       │
+│   Loop Create                          │
+│   View Credentials                     │
+│   Export Credentials                   │
+│   Keep Alive Accounts                  │
+│   Upload File                          │
+│   Settings                             │
+│   Exit                                 │
+└────────────────────────────────────────┘
+```
+
+The **Settings** submenu lets you change, for the duration of the session:
+
+| Setting | Effect |
+| --- | --- |
+| **Max Attempts** | How many times registration retries with a fresh email (default 4). |
+| **Visible Browser** | Run Chromium in a visible window instead of headless. |
+| **Auto CSV Export** | Also append every new account to `credentials/accounts.csv`. |
+
+### Command-line / scripting
+
+Every menu action is also available as a flag, which is handy in scripts.
 
 ```bash
+# Create a single account (headless, verbose)
+python main.py -v
+
+# Create a visible account so you can watch
+python main.py -sh
+
+# Upload a file and get a public share link
 python main.py -f FILENAME -p
-```
 
-This uploads `FILENAME` to a new account and prints a **publicly shareable
-link**.
-
-### Keeping accounts alive
-
-MEGA tends to purge accounts that are never logged into, so run the keepalive
-service periodically:
-
-```bash
+# Keep every saved account alive
 python main.py -ka -v
+
+# Mass-generation summary after 20 attempts, 8 retries each, CSV export
+python main.py -l 20 -a 8 --export-csv
 ```
 
-This logs into every saved account and prints the storage used (`-v` for
-verbose).
+> [!WARNING]
+> Do not combine the **Services** arguments (`-e`, `-ka`) with the file-upload
+> arguments (`-f`, `-p`).
 
-### Mass generation / uploads
+---
 
-```bash
-python main.py -p -f FILENAME -l TIMES_TO_LOOP
-```
+## Arguments
+
+| Argument | Description |
+| --- | --- |
+| `-f <file>`, `--file <file>` | Uploads a file to the generated account. |
+| `-p`, `--public` | Generates a shareable link to the uploaded file (use with `-f`). |
+| `-l <n>`, `--loop <n>` | Loops the program `n` times and prints a summary. |
+| `-e`, `--extract` | Compiles all saved `.json` credentials into a single file using the configured format. |
+| `-ka`, `--keepalive` | Logs into the accounts to keep them alive. |
+| `-v`, `--verbose` | Verbose logging (registration steps, mail addresses, keepalive storage). |
+| `-sh`, `--visible` | Run Chromium visibly (non-headless) so you can watch it work. |
+| `-a <n>`, `--attempts <n>` | Max registration attempts before giving up (default: 4). |
+| `-csv`, `--export-csv` | Also export every saved account to `credentials/accounts.csv`. |
 
 ---
 
 ## Credential format
 
-By default each account is saved as a separate JSON file:
+By default each account is saved as a separate, human-readable JSON file under
+`credentials/`:
 
 ```json
-{"email": "*******@*******.com", "emailPassword": "*****", "password": "*********"}
+{
+  "email": "*******@*******.com",
+  "emailPassword": "*****",
+  "password": "*********"
+}
 ```
 
 - `email` / `password` — use these to log into the **MEGA** account later.
 - `emailPassword` — the password of the disposable **mail.tm** inbox (handy if
   you ever need to re-check the inbox).
+
+With `--export-csv`, every account is also appended to
+`credentials/accounts.csv` in `email,password,emailPassword` form.
 
 ### Custom format
 
@@ -176,23 +241,6 @@ set:
 ```
 
 Setting `accountFormat` to `""` restores the default per-account JSON files.
-
----
-
-## Arguments
-
-> [!WARNING]
-> Do not combine the **Services** arguments (`-e`, `-ka`) with the file-upload
-> arguments (`-f`, `-p`).
-
-| Argument | Description |
-| --- | --- |
-| `-f <file>`, `--file <file>` | Uploads a file to the generated account. |
-| `-p`, `--public` | Generates a shareable link to the uploaded file (use with `-f`). |
-| `-l <n>`, `--loop <n>` | Loops the program `n` times. |
-| `-e`, `--extract` | Compiles all saved `.json` credentials into a single file using the configured format. |
-| `-ka`, `--keepalive` | Logs into the accounts to keep them alive. |
-| `-v`, `--verbose` | Shows storage left while using keepalive. |
 
 ---
 
@@ -221,11 +269,15 @@ MegaTemp fixes this by:
   the real password with a per-character delay, and **verify** the field holds
   the exact value before continuing (it raises otherwise, so a dead account is
   never saved).
+- Typing the email through the same robust routine so the first character is
+  never dropped.
 - Detecting a *successful* confirmation by leaving the confirm page (the
   recovery-key screen) instead of relying on an outdated `#freeStart` selector,
   and raising on failure so the run retries with a fresh email.
 - Creating a fresh browser page per attempt so a transient Pyppeteer error
   can't poison the retry loop.
+- Capping the mail-tm polling and account-generation retries so the program
+  can never hang forever.
 
 ---
 
@@ -233,7 +285,7 @@ MegaTemp fixes this by:
 
 ```
 MegaTemp/
-├── main.py              # Entry point, argument handling, registration loop
+├── main.py              # Entry point: TUI, argument handling, registration loop
 ├── config.json          # Browser path + credential format (gitignored)
 ├── requirements.txt
 ├── pyproject.toml       # Ruff / mypy config
@@ -243,9 +295,10 @@ MegaTemp/
 │   └── extract.py       # Credential export
 ├── utilities/
 │   ├── web.py           # Browser automation (register / confirm / mail)
-│   ├── etc.py           # Helpers (credentials, printing, etc.)
+│   ├── etc.py           # Helpers (credentials, printing, updates, status line)
+│   ├── menu.py          # Zero-dependency interactive terminal menu engine
 │   ├── fs.py            # Config + credential file I/O
-│   └── types.py         # Data types
+│   └── types.py         # Data types (Colours, Credentials, Config)
 └── .github/             # CI + community health files
 ```
 
@@ -263,6 +316,14 @@ ruff format .
 ```
 
 Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+---
+
+## Documentation
+
+- The [docs/](./docs/) folder holds the full guide: installation, usage,
+  configuration, troubleshooting, and development.
+- A [CHANGELOG.md](./CHANGELOG.md) tracks every release.
 
 ---
 
