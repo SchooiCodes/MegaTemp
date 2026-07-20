@@ -3,6 +3,7 @@
 import os
 import shutil
 import json
+import time
 from urllib.request import urlopen, Request
 import sys
 from mega import Mega
@@ -141,3 +142,46 @@ def p_print(
 def clear_console():
 	"""Clears console."""
 	os.system("cls" if os.name == "nt" else "clear")
+
+
+def separator(title: str = "", colour: str = Colours.HEADER, width: int = 60):
+	"""Prints a horizontal rule, optionally with a centered title.
+
+	Used to visually break the output into scannable phases, e.g.
+	`──────────────── Registration attempt 1/4 ────────────────`.
+	"""
+	if title:
+		title = f" {title} "
+		pad = max(0, width - len(title))
+		left = pad // 2
+		right = pad - left
+		line = ("─" * left) + title + ("─" * right)
+	else:
+		line = "─" * width
+	print(colour + line + Colours.ENDC)
+
+
+def status_line(text: str, colour: str = Colours.OKCYAN):
+	"""Overwrites the current terminal line in place (no newline).
+
+	Handy for high-frequency polling updates so we don't spam the scrollback.
+	Call `clear_status_line()` (or print a newline) when finished.
+	"""
+	# \r returns to column 0; pad to clear any leftover from a longer prior line.
+	sys.stdout.write("\r\033[K" + colour + text + Colours.ENDC)
+	sys.stdout.flush()
+
+
+def clear_status_line():
+	"""Clears the in-place status line and moves to a fresh line."""
+	sys.stdout.write("\r\033[K")
+	sys.stdout.flush()
+
+
+def elapsed(start: float) -> str:
+	"""Returns a human-readable elapsed duration since a monotonic `start`."""
+	seconds = time.monotonic() - start
+	if seconds < 60:
+		return f"{seconds:.1f}s"
+	minutes, secs = divmod(seconds, 60)
+	return f"{int(minutes)}m {secs:.1f}s"

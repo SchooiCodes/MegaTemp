@@ -114,6 +114,27 @@ def save_credentials(credentials: Credentials, account_format: str) -> None:
 		with open(f"credentials/{safe_name}.json", "w", encoding="utf-8") as file:
 			data = asdict(credentials)
 			data.pop("id", None)
-			file.write(json.dumps(data))
+			file.write(json.dumps(data, indent=2))
 	except OSError as e:
 		p_print(f"Failed to write credentials file: {e}", Colours.FAIL)
+
+
+def save_credentials_csv(credentials: Credentials) -> None:
+	"""Append the credentials to credentials/accounts.csv (email,password,emailPassword)."""
+	import csv
+
+	if not os.path.exists("credentials"):
+		os.mkdir("credentials")
+	csv_path = "credentials/accounts.csv"
+	write_header = not os.path.exists(csv_path) or os.stat(csv_path).st_size == 0
+	try:
+		with open(csv_path, "a", encoding="utf-8", newline="") as file:
+			writer = csv.writer(file)
+			if write_header:
+				writer.writerow(["email", "password", "emailPassword"])
+			writer.writerow(
+				[credentials.email, credentials.password, credentials.emailPassword]
+			)
+		p_print(f"Exported credentials to {csv_path}", Colours.OKCYAN)
+	except OSError as e:
+		p_print(f"Failed to write accounts.csv: {e}", Colours.FAIL)

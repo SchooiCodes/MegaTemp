@@ -12,7 +12,13 @@ from pymailtm.pymailtm import CouldNotGetAccountException, CouldNotGetMessagesEx
 import pyppeteer
 import pyppeteer.page
 
-from utilities.etc import Credentials, p_print, Colours
+from utilities.etc import (
+	Credentials,
+	p_print,
+	Colours,
+	status_line,
+	clear_status_line,
+)
 
 # Module-level verbosity flag, toggled from main.py via set_verbose().
 _VERBOSE = False
@@ -243,15 +249,18 @@ async def get_mail(mail, max_attempts: int = 80):
 	for attempt in range(1, max_attempts + 1):
 		try:
 			message = mail.get_messages()[0]
+			clear_status_line()
 			_step("[mail] confirmation email received.", Colours.OKGREEN)
 			return message
 		except (IndexError, CouldNotGetMessagesException):
-			p_print(
-				f"[mail] no email yet, retrying ({attempt}/{max_attempts})...",
+			# In-place status update instead of spamming one line per poll.
+			status_line(
+				f"[mail] waiting for confirmation email ({attempt}/{max_attempts})...",
 				Colours.WARNING,
 			)
 			await asyncio.sleep(1.5)
 
+	clear_status_line()
 	raise CouldNotGetMessagesException(
 		"Timed out waiting for the confirmation email from MEGA."
 	)
@@ -259,8 +268,7 @@ async def get_mail(mail, max_attempts: int = 80):
 
 async def type_name(page: pyppeteer.page.Page, credentials: Credentials):
 	"""Types name and email into the register fields."""
-	name = str(fake.name()).split(" ", 2)
-	firstname = name[0]
+	firstname = fake.first_name()
 	_step("[register] opening mega.nz/register ...", Colours.HEADER)
 	await page.goto("https://mega.nz/register")
 
@@ -333,7 +341,8 @@ async def generate_mail() -> Credentials:
 			await asyncio.sleep(min(attempt, 5))
 	else:
 		raise CouldNotGetAccountException(
-			"Could not create a mail.tm account after several attempts."
+			f"Could not create a mail.tm account after {max_retries} attempts "
+			"(mail.tm may be down or rate-limiting)."
 		)
 
 	credentials = Credentials()

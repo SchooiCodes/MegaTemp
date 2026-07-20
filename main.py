@@ -4,6 +4,7 @@ import asyncio
 import argparse
 import os
 import sys
+import time
 from typing import Tuple
 import pyppeteer
 
@@ -17,6 +18,7 @@ from utilities.fs import (
 	write_config,
 	write_default_config,
 	save_credentials,
+	save_credentials_csv,
 )
 from utilities.web import (
 	finish_form,
@@ -32,21 +34,13 @@ from pymailtm.pymailtm import CouldNotGetMessagesException
 from utilities.etc import (
 	Credentials,
 	p_print,
-	clear_console,
 	Colours,
 	clear_tmp,
-	reinstall_tenacity,
 	check_for_updates,
 	delete_default,
+	separator,
+	elapsed,
 )
-
-# Spooky import to check if the correct version of tenacity is installed.
-if sys.version_info.major == 3 and sys.version_info.minor <= 11:
-	try:
-		pass
-	except AttributeError:
-		reinstall_tenacity()
-
 
 # Harmless pyppeteer teardown noise: after we close the browser, pyppeteer's
 # connection may still have in-flight CDP messages whose futures resolve with a
@@ -78,6 +72,7 @@ def _quiet_async_exceptions(loop, context):
 	if any(marker in text for marker in _HARMLESS_ASYNC_ERRORS):
 		return
 	loop.default_exception_handler(context)
+
 
 default_installs = [
 	"C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -137,6 +132,28 @@ parser.add_argument(
 	help="Loops the program for a specified amount of times.",
 	type=int,
 )
+parser.add_argument(
+	"-sh",
+	"--visible",
+	required=False,
+	action="store_true",
+	help="Run Chromium in visible (non-headless) mode so you can watch it work.",
+)
+parser.add_argument(
+	"-a",
+	"--attempts",
+	required=False,
+	type=int,
+	default=4,
+	help="Maximum registration attempts before giving up (default: 4).",
+)
+parser.add_argument(
+	"-csv",
+	"--export-csv",
+	required=False,
+	action="store_true",
+	help="Also export every saved account to credentials/accounts.csv.",
+)
 
 console_args = parser.parse_args()
 
@@ -172,26 +189,69 @@ def setup() -> Tuple[str, Config]:
 	return executable_path, config
 
 
-def loop_registrations(loop_count: int, executable_path: str, config: Config):
-	"""Registers accounts in a loop."""
-	for _ in range(loop_count):
-		p_print(f"Loop {_ + 1}/{loop_count}", Colours.OKGREEN)
+def loop_registrations(
+	loop_count: int,
+	executable_path: str,
+	config: Config,
+	visible: bool = False,
+	max_attempts: int = 4,
+	export_csv: bool = False,
+):
+	"""Registers accounts in a loop, printing a summary at the end."""
+	separator("Loop mode", Colours.HEADER)
+	successes, failures = 0, 0
+	start = time.monotonic()
+	for i in range(loop_count):
+		p_print(f"Loop {i + 1}/{loop_count}", Colours.OKGREEN)
 		clear_tmp()
+		try:
+			asyncio.run(
+				register(
+					None,
+					executable_path,
+					config,
+					visible=visible,
+					max_attempts=max_attempts,
+					export_csv=export_csv,
+				)
+			)
+			successes += 1
+		except SystemExit:
+			# register() calls sys.exit(0) on success; a non-zero exit means
+			# it gave up after exhausting its attempts.
+			failures += 1
 
-		asyncio.run(register(None, executable_path, config))
+	total = elapsed(start)
+	separator("Loop summary", Colours.HEADER)
+	p_print(f"Total accounts: {loop_count}", Colours.OKBLUE)
+	p_print(f"  Successful:   {successes}", Colours.OKGREEN)
+	p_print(f"  Failed:       {failures}", Colours.WARNING)
+	p_print(f"  Total time:   {total}", Colours.OKCYAN)
+	if successes:
+		per = (time.monotonic() - start) / successes
+		mins, secs = divmod(per, 60)
+		avg_per = f"{int(mins)}m {secs:.1f}s" if mins else f"{secs:.1f}s"
+		p_print(f"  Avg / success: {avg_per}", Colours.OKCYAN)
+	p_print("Done.", Colours.OKGREEN)
+	sys.exit(0)
 
 
 async def register(
-	credentials: Credentials | None, executable_path: str, config: Config
+	credentials: Credentials | None,
+	executable_path: str,
+	config: Config,
+	visible: bool = False,
+	max_attempts: int = 4,
+	export_csv: bool = False,
 ):
-	"""Registers and verifies mega.nz account.
+	"""Registers and verifies a mega.nz account.
 
 	MEGA's confirmation email is sometimes delayed or not delivered by the
 	mail provider. To stay robust we retry the whole registration (with a
 	fresh email address) a few times before giving up.
 	"""
-	max_attempts = 4
 	message = None
+	start = time.monotonic()
 
 	# Silence benign pyppeteer teardown warnings emitted during browser close.
 	asyncio.get_running_loop().set_exception_handler(_quiet_async_exceptions)
@@ -199,7 +259,7 @@ async def register(
 	p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
 	browser = await pyppeteer.launch(
 		{
-			"headless": True,
+			"headless": not visible,
 			"ignoreHTTPSErrors": True,
 			"userDataDir": f"{os.getcwd()}/tmp",
 			"args": args,
@@ -213,10 +273,7 @@ async def register(
 
 	try:
 		for attempt in range(1, max_attempts + 1):
-			p_print(
-				f"=== Registration attempt {attempt}/{max_attempts} ===",
-				Colours.HEADER,
-			)
+			separator(f"Registration attempt {attempt}/{max_attempts}")
 			credentials = await generate_mail()
 			page = await context.newPage()
 			try:
@@ -273,6 +330,10 @@ async def register(
 		)
 		sys.exit(1)
 
+	p_print(
+		f"Account verified in {elapsed(start)}.",
+		Colours.OKGREEN,
+	)
 	p_print("Verified account.", Colours.OKGREEN)
 	p_print(
 		f"Email: {credentials.email}\nPassword: {credentials.password}",
@@ -288,6 +349,8 @@ async def register(
 		)
 	p_print("Saving credentials ...", Colours.HEADER)
 	save_credentials(credentials, config.accountFormat)
+	if export_csv:
+		save_credentials_csv(credentials)
 
 	if console_args.file is not None:
 		try:
@@ -309,7 +372,6 @@ async def register(
 
 
 if __name__ == "__main__":
-	clear_console()
 	set_verbose(console_args.verbose)
 	check_for_updates()
 
@@ -325,7 +387,23 @@ if __name__ == "__main__":
 		p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)
 		keepalive(console_args.verbose)
 	elif console_args.loop is not None and console_args.loop > 1:
-		loop_registrations(console_args.loop, executable_path, config)
+		loop_registrations(
+			console_args.loop,
+			executable_path,
+			config,
+			console_args.visible,
+			console_args.attempts,
+			console_args.export_csv,
+		)
 	else:
 		clear_tmp()
-		asyncio.run(register(None, executable_path, config))
+		asyncio.run(
+			register(
+				None,
+				executable_path,
+				config,
+				visible=console_args.visible,
+				max_attempts=console_args.attempts,
+				export_csv=console_args.export_csv,
+			)
+		)
