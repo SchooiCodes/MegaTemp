@@ -475,29 +475,27 @@ def parallel_registrations(
 		try:
 			while True:
 				async with sem:
-					pass
-				# Acquire the global slot
-				async with _lock:
-					if successes + failures >= loop_count:
-						return
-				try:
-					await register(
-						None,
-						executable_path,
-						config,
-						visible=visible,
-						max_attempts=max_attempts,
-						export_csv=export_csv,
-						_browser=browser,
-					)
 					async with _lock:
-						successes += 1
-				except SystemExit as e:
-					async with _lock:
-						if e.code is None or e.code == 0:
+						if successes + failures >= loop_count:
+							return
+					try:
+						await register(
+							None,
+							executable_path,
+							config,
+							visible=visible,
+							max_attempts=max_attempts,
+							export_csv=export_csv,
+							_browser=browser,
+						)
+						async with _lock:
 							successes += 1
-						else:
-							failures += 1
+					except SystemExit as e:
+						async with _lock:
+							if e.code is None or e.code == 0:
+								successes += 1
+							else:
+								failures += 1
 		finally:
 			try:
 				await browser.close()
@@ -1300,6 +1298,7 @@ if __name__ == "__main__":
 	elif any(
 		[
 			console_args.file,
+			console_args.upload_dir,
 			console_args.visible,
 			console_args.attempts != 4,
 			console_args.export_csv,
