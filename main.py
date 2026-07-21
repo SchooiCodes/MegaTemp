@@ -346,6 +346,11 @@ if console_args.provider is not None:
 		)
 		sys.exit(1)
 
+# --json only makes sense with --health.
+if console_args.json and not console_args.health:
+	p_print("--json requires --health (e.g. --health --json).", Colours.WARNING)
+	sys.exit(1)
+
 
 def setup() -> Tuple[str, Config]:
 	"""Sets up the configs so everything runs smoothly."""
