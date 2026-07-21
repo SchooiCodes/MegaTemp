@@ -312,6 +312,13 @@ parser.add_argument(
 	action="store_true",
 	help="Show version and exit.",
 )
+parser.add_argument(
+	"--provider",
+	required=False,
+	metavar="NAME",
+	default=None,
+	help='Email provider: "mailtm" (default) or "guerrillamail".',
+)
 
 console_args = parser.parse_args()
 
@@ -368,6 +375,7 @@ def loop_registrations(
 	max_attempts: int = 4,
 	export_csv: bool = False,
 	resume: bool = False,
+	provider_name: str | None = None,
 ):
 	"""Registers accounts in a loop, printing a summary at the end.
 
@@ -425,6 +433,7 @@ def loop_registrations(
 						visible=visible,
 						max_attempts=max_attempts,
 						export_csv=export_csv,
+						provider_name=provider_name,
 						_browser=browser,
 					)
 					successes += 1
@@ -478,6 +487,7 @@ def parallel_registrations(
 	visible: bool = False,
 	max_attempts: int = 4,
 	export_csv: bool = False,
+	provider_name: str | None = None,
 ):
 	"""Register accounts concurrently using N parallel workers.
 
@@ -521,6 +531,7 @@ def parallel_registrations(
 							visible=visible,
 							max_attempts=max_attempts,
 							export_csv=export_csv,
+							provider_name=provider_name,
 							_browser=browser,
 						)
 						async with _lock:
@@ -578,6 +589,7 @@ async def register(
 	visible: bool = False,
 	max_attempts: int = 4,
 	export_csv: bool = False,
+	provider_name: str | None = None,
 	_browser=None,  # internal: reuse across loop iterations
 ):
 	"""Registers and verifies a mega.nz account.
@@ -591,7 +603,9 @@ async def register(
 	"""
 	message = None
 	start = time.monotonic()
-	provider_name = getattr(config, "emailProvider", "mailtm") or "mailtm"
+	provider_name = (
+		provider_name or getattr(config, "emailProvider", "mailtm") or "mailtm"
+	)
 
 	# Silence benign pyppeteer teardown warnings emitted during browser close.
 	asyncio.get_running_loop().set_exception_handler(_quiet_async_exceptions)
@@ -1465,6 +1479,7 @@ if __name__ == "__main__":
 				visible=console_args.visible,
 				max_attempts=console_args.attempts,
 				export_csv=console_args.export_csv,
+				provider_name=console_args.provider,
 			)
 		else:
 			loop_registrations(
@@ -1475,6 +1490,7 @@ if __name__ == "__main__":
 				console_args.attempts,
 				console_args.export_csv,
 				resume=console_args.resume,
+				provider_name=console_args.provider,
 			)
 	elif any(
 		[
@@ -1496,6 +1512,7 @@ if __name__ == "__main__":
 				visible=console_args.visible,
 				max_attempts=console_args.attempts,
 				export_csv=console_args.export_csv,
+				provider_name=console_args.provider,
 			)
 		)
 	else:
