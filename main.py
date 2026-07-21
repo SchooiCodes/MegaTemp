@@ -325,6 +325,12 @@ parser.add_argument(
 	action="store_true",
 	help="Show health dashboard (quota, age, status) for all saved accounts.",
 )
+parser.add_argument(
+	"--json",
+	required=False,
+	action="store_true",
+	help="Output health dashboard as JSON (use with --health).",
+)
 
 console_args = parser.parse_args()
 
@@ -1098,14 +1104,19 @@ def _action_export(config):
 	pause("Press Enter to return to the menu...")
 
 
-def _action_storage(config):
+def _action_storage(config, json_output=False):
 	"""Show health dashboard — quota, status, age, notes for all accounts."""
 	from utilities.fs import list_credentials
 
 	creds_list = list_credentials()
 	if not creds_list:
-		p_print("No saved credentials.", Colours.WARNING)
-		pause()
+		if json_output:
+			import json as _json
+
+			print(_json.dumps({"error": "No saved credentials."}))
+		else:
+			p_print("No saved credentials.", Colours.WARNING)
+			pause()
 		return
 
 	from mega import Mega
@@ -1113,31 +1124,66 @@ def _action_storage(config):
 
 	alive = 0
 	dead = 0
-	p_print("Health dashboard — querying storage for each account...", Colours.HEADER)
+	results = []
+	if not json_output:
+		p_print(
+			"Health dashboard — querying storage for each account...", Colours.HEADER
+		)
+
 	for _fname, creds, _mtime in creds_list:
 		age = datetime.datetime.now() - datetime.datetime.fromtimestamp(_mtime)
 		days = age.days
-		tag_str = f" [{creds.tags}]" if creds.tags else ""
+		entry = {"email": creds.email, "age_days": days, "tags": creds.tags or ""}
 		try:
 			mega = Mega()
 			mega.login(creds.email, creds.password)
 			quota = mega.get_quota() / (1024**3)
-			p_print(
-				f"  {'✓':>3} {creds.email:<35} {quota:>5.1f} GB  {days:>3}d old"
-				f"{tag_str}",
-				Colours.OKGREEN,
-			)
+			entry["status"] = "alive"
+			entry["quota_gb"] = round(quota, 2)
+			if json_output:
+				results.append(entry)
+			else:
+				tag_str = f" [{creds.tags}]" if creds.tags else ""
+				p_print(
+					f"  {'✓':>3} {creds.email:<35} {quota:>5.1f} GB  {days:>3}d old"
+					f"{tag_str}",
+					Colours.OKGREEN,
+				)
 			alive += 1
 		except Exception:
-			p_print(
-				f"  {'✗':>3} {creds.email:<35} {'DEAD':>8}  {days:>3}d old{tag_str}",
-				Colours.FAIL,
-			)
+			entry["status"] = "dead"
+			entry["quota_gb"] = 0
+			if json_output:
+				results.append(entry)
+			else:
+				tag_str = f" [{creds.tags}]" if creds.tags else ""
+				p_print(
+					f"  {'✗':>3} {creds.email:<35} {'DEAD':>8}  {days:>3}d old{tag_str}",
+					Colours.FAIL,
+				)
 			dead += 1
-	separator(
-		f"Summary: {alive} alive / {dead} dead / {len(creds_list)} total",
-		Colours.HEADER,
-	)
+
+	if json_output:
+		import json as _json
+
+		print(
+			_json.dumps(
+				{
+					"accounts": results,
+					"summary": {
+						"alive": alive,
+						"dead": dead,
+						"total": len(creds_list),
+					},
+				},
+				indent=2,
+			)
+		)
+	else:
+		separator(
+			f"Summary: {alive} alive / {dead} dead / {len(creds_list)} total",
+			Colours.HEADER,
+		)
 	pause("Press Enter to return to the menu...")
 
 
@@ -1459,7 +1505,7 @@ if __name__ == "__main__":
 		p_print(f"MegaTemp {VERSION}", Colours.OKGREEN)
 		sys.exit(0)
 	elif console_args.health:
-		_action_storage(config)
+		_action_storage(config, json_output=console_args.json)
 		sys.exit(0)
 	elif console_args.list_cloud:
 		from services.download import _action_browse_cloud

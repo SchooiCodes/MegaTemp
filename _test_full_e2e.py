@@ -1042,6 +1042,22 @@ class TestMainCLI:
 			or "Health dashboard" in result.stdout
 		)
 
+	def test_main_health_json(self):
+		import subprocess
+
+		result = subprocess.run(
+			[sys.executable, "main.py", "--health", "--json"],
+			capture_output=True,
+			text=True,
+			timeout=30,
+		)
+		assert result.returncode == 0
+		import json as _json
+
+		data = _json.loads(result.stdout)
+		assert "error" in data or "summary" in data
+		assert "accounts" in data or "error" in data
+
 
 if __name__ == "__main__":
 	pytest.main([__file__, "-v", "--tb=short"])
