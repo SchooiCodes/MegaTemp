@@ -743,6 +743,30 @@ class TestDownload:
 		result = download_file(creds, "nonexistent-id", "/tmp")
 		assert result is None
 
+	def test_list_cloud_flag_no_creds(self):
+		"""--list-cloud with no credentials should not crash."""
+		import subprocess
+
+		result = subprocess.run(
+			[sys.executable, "main.py", "--list-cloud"],
+			capture_output=True,
+			text=True,
+			timeout=10,
+		)
+		assert "Traceback" not in result.stderr
+
+	def test_download_cloud_flag_no_creds(self):
+		"""--download-cloud with no credentials should not crash."""
+		import subprocess
+
+		result = subprocess.run(
+			[sys.executable, "main.py", "--download-cloud", "dummy-id"],
+			capture_output=True,
+			text=True,
+			timeout=10,
+		)
+		assert "Traceback" not in result.stderr
+
 	def test_separator_no_title(self):
 		from services.download import separator
 		from utilities.models import Colours
