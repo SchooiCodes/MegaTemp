@@ -66,6 +66,7 @@ python main.py
 | **Tab completion** | Press Tab when entering file paths in upload/download prompts |
 | **Docker support** | `docker build -t megatem . && docker run -it megatem` |
 | **Docker Compose** | `docker compose up` with persistent credentials |
+| **Makefile** | `make run`, `make test`, `make lint`, `make format`, `make clean` |
 
 ---
 
@@ -120,6 +121,7 @@ Settings (per-session): max retries, visible browser, CSV export toggle.
 | `--upload-dir <dir>` | Upload all files in a directory |
 | `--version` | Show version and exit |
 | `--provider <name>` | Email provider: `mailtm` or `guerrillamail` |
+| `--health` | Show health dashboard (quota, age, status) from CLI |
 
 > **Don't** combine services (`-e`, `-ka`) with upload (`-f`, `-p`).
 

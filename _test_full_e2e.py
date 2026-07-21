@@ -1037,7 +1037,10 @@ class TestMainCLI:
 			timeout=30,
 		)
 		assert "Traceback" not in result.stderr
-		assert "No saved credentials" in result.stdout or "Health dashboard" in result.stdout
+		assert (
+			"No saved credentials" in result.stdout
+			or "Health dashboard" in result.stdout
+		)
 
 
 if __name__ == "__main__":

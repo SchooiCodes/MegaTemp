@@ -99,6 +99,7 @@ overwriting it.
 | | `--download-dest DIR` | Destination for `--download-cloud` (default `.`) |
 | | `--version` | Show version (`MegaTemp v1.3.0`) and exit |
 | | `--provider NAME` | Email provider: `mailtm` (default) or `guerrillamail` |
+| | `--health` | Show health dashboard for all saved accounts |
 
 ## Examples
 
@@ -116,6 +117,7 @@ python main.py --download-cloud FILE_ID --download-dest ./downloads  # download
 python main.py -ka --interval 24        # keep alive every 24 hours
 python main.py --provider guerrillamail # use Guerrilla Mail provider
 python main.py --version                # show version
+python main.py --health                 # health dashboard from CLI
 ```
 
 > [!WARNING]
