@@ -129,6 +129,12 @@ class ProxyManager:
 	def count(self) -> int:
 		return len(self._proxies)
 
+	def distribute(self, worker_count: int) -> list[str | None]:
+		"""Return one proxy per worker (round-robin). Missing = None."""
+		if not self._proxies:
+			return [None] * worker_count
+		return [self._proxies[i % len(self._proxies)] for i in range(worker_count)]
+
 
 def _latest_release_tag() -> str | None:
 	"""Fetch the tag name of the latest GitHub release (not just any tag)."""

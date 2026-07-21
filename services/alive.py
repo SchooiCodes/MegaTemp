@@ -7,7 +7,7 @@ import time
 from mega import Mega
 from mega.errors import RequestError
 
-from utilities.etc import p_print, Colours, elapsed
+from utilities.etc import p_print, Colours, elapsed, separator
 
 
 def keepalive(verbose: bool, prune: bool = False, max_retries: int = 3):
@@ -116,16 +116,3 @@ def keepalive(verbose: bool, prune: bool = False, max_retries: int = 3):
 	fails = sum(1 for r in results if r["status"] == "FAIL")
 	p_print(f"  OK:   {oks}", Colours.OKGREEN)
 	p_print(f"  FAIL: {fails}", Colours.FAIL)
-
-
-def separator(title: str = "", colour: str = Colours.HEADER, width: int = 60):
-	"""Prints a horizontal rule, optionally with a centered title."""
-	if title:
-		title = f" {title} "
-		pad = max(0, width - len(title))
-		left = pad // 2
-		right = pad - left
-		line = ("─" * left) + title + ("─" * right)
-	else:
-		line = "─" * width
-	print(colour + line + Colours.ENDC)

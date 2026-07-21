@@ -30,13 +30,13 @@ if [ ! -f config.json ]; then
 {
 	"schemaVersion": 1,
 	"executablePath": "",
-	"accountFormat": "Email: {email}\nEmail Password: {emailPassword}\nPassword: {password}",
-	"maxAttempts": 4,
-	"visibleBrowser": false,
-	"csvExport": false,
+	"accountFormat": "",
 	"proxy": "",
 	"proxyFile": "",
 	"proxyPerAttempt": false,
+	"maxAttempts": 4,
+	"csvExport": false,
+	"visibleBrowser": false,
 	"emailProvider": "mailtm"
 }
 CONFIG

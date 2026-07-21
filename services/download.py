@@ -4,7 +4,7 @@ import os
 
 from mega import Mega
 
-from utilities.etc import Credentials, p_print, Colours
+from utilities.etc import Credentials, p_print, Colours, separator
 from utilities.menu import prompt_int, prompt_text, pause
 
 
@@ -99,16 +99,3 @@ def _action_browse_cloud(_executable_path, _config):
 		return
 	download_file(creds, selected["id"], dest)
 	pause()
-
-
-def separator(title: str = "", colour: str = Colours.HEADER, width: int = 60):
-	"""Prints a horizontal rule, optionally with a centered title."""
-	if title:
-		title = f" {title} "
-		pad = max(0, width - len(title))
-		left = pad // 2
-		right = pad - left
-		line = ("─" * left) + title + ("─" * right)
-	else:
-		line = "─" * width
-	print(colour + line + Colours.ENDC)

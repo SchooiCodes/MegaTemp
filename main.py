@@ -471,15 +471,10 @@ def parallel_registrations(
 	start = time.monotonic()
 	_lock = asyncio.Lock()
 
-	async def _worker(sem: asyncio.Semaphore, worker_id: int):
+	async def _worker(sem: asyncio.Semaphore, worker_id: int, proxy: str | None = None):
 		nonlocal successes, failures
-		worker_proxy = (
-			_proxy_manager._proxies[worker_id % len(_proxy_manager._proxies)]
-			if _proxy_manager.active
-			else None
-		)
 		p_print(
-			f"Worker {worker_id} starting{' with proxy' if worker_proxy else ''}...",
+			f"Worker {worker_id} starting{' with proxy' if proxy else ''}...",
 			Colours.OKCYAN,
 		)
 		browser = await pyppeteer.launch(
@@ -487,7 +482,7 @@ def parallel_registrations(
 				"headless": not visible,
 				"ignoreHTTPSErrors": True,
 				"userDataDir": f"{os.getcwd()}/tmp_{worker_id}",
-				"args": _build_browser_args(proxy_override=worker_proxy),
+				"args": _build_browser_args(proxy_override=proxy),
 				"executablePath": executable_path,
 				"autoClose": False,
 				"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
@@ -517,6 +512,13 @@ def parallel_registrations(
 								successes += 1
 							else:
 								failures += 1
+					except Exception as exc:
+						p_print(
+							f"Worker {worker_id} error: {exc}",
+							Colours.FAIL,
+						)
+						async with _lock:
+							failures += 1
 		finally:
 			try:
 				await browser.close()
@@ -525,7 +527,8 @@ def parallel_registrations(
 
 	async def _run_all():
 		sem = asyncio.Semaphore(parallelism)
-		tasks = [_worker(sem, i) for i in range(parallelism)]
+		proxies = _proxy_manager.distribute(parallelism)
+		tasks = [_worker(sem, i, proxy=proxies[i]) for i in range(parallelism)]
 		await asyncio.gather(*tasks)
 
 	asyncio.run(_run_all())
@@ -1101,38 +1104,6 @@ def _action_upload_dir(_unused_executable_path, config):
 	creds = _pick_credentials()
 	if creds is None:
 		return
-	for f in files:
-		upload_file(public, f, creds)
-	pause("Press Enter to return to the menu...")
-	"""Prompt for a directory, then upload all files inside (non-recursive)."""
-	import glob
-
-	path = os.path.expanduser(prompt_text("Path to directory to upload"))
-	if not os.path.isdir(path):
-		p_print(f"Directory not found: {path}", Colours.FAIL)
-		pause()
-		return
-	files = sorted(f for f in glob.glob(os.path.join(path, "*")) if os.path.isfile(f))
-	if not files:
-		p_print(f"No files found in {path}", Colours.WARNING)
-		pause()
-		return
-	public = prompt_yes_no("Generate public share links?")
-	p_print(f"Uploading {len(files)} file(s) from {path}...", Colours.HEADER)
-	jsons = sorted(
-		glob.glob("./credentials/*.json"), key=os.path.getmtime, reverse=True
-	)
-	if not jsons:
-		p_print("No saved credentials to upload with.", Colours.FAIL)
-		pause()
-		return
-	import json
-
-	with open(jsons[0], "r", encoding="utf-8") as fh:
-		data = json.load(fh)
-	creds = Credentials(
-		data.get("email", ""), data.get("emailPassword", ""), data.get("password", "")
-	)
 	for f in files:
 		upload_file(public, f, creds)
 	pause("Press Enter to return to the menu...")
