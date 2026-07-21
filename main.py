@@ -277,6 +277,26 @@ parser.add_argument(
 	help="Number of parallel workers when using --loop. Default 1 (sequential). "
 	"Each worker gets its own browser and optionally a dedicated proxy.",
 )
+parser.add_argument(
+	"--list-cloud",
+	required=False,
+	action="store_true",
+	help="List files in the cloud for the most recent account.",
+)
+parser.add_argument(
+	"--download-cloud",
+	required=False,
+	metavar="FILE_ID",
+	default="",
+	help="Download a file from cloud by its node ID (use --list-cloud to get IDs).",
+)
+parser.add_argument(
+	"--download-dest",
+	required=False,
+	metavar="DIR",
+	default=".",
+	help="Destination directory for --download-cloud (default: current dir).",
+)
 
 console_args = parser.parse_args()
 
@@ -1297,7 +1317,25 @@ if __name__ == "__main__":
 		p_print("Failed while setting up!", Colours.FAIL)
 		sys.exit(1)
 
-	if console_args.extract:
+	if console_args.list_cloud:
+		from services.download import _action_browse_cloud
+
+		_action_browse_cloud(executable_path, config)
+	elif console_args.download_cloud:
+		from services.download import download_file
+		from utilities.fs import list_credentials
+
+		creds_list = list_credentials()
+		if not creds_list:
+			p_print("No saved credentials.", Colours.FAIL)
+			sys.exit(1)
+		creds = creds_list[0][1]
+		dest = os.path.expanduser(console_args.download_dest)
+		if not os.path.isdir(dest):
+			p_print(f"Directory not found: {dest}", Colours.FAIL)
+			sys.exit(1)
+		download_file(creds, console_args.download_cloud, dest)
+	elif console_args.extract:
 		p_print("Extracting credentials to credentials.txt ...", Colours.HEADER)
 		extract_credentials(config.accountFormat)
 	elif console_args.keepalive:
