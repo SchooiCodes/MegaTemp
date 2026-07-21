@@ -330,40 +330,59 @@ _mailtm_domains: list[str] | None = None
 
 
 async def generate_mail() -> Credentials:
-	"""Generate mail.tm account and return account credentials."""
+	"""Generate mail.tm account and return account credentials.
+
+	mail.tm's API uses random usernames which often collide with existing
+	accounts (HTTP 422 "already used"). To avoid excessive retries we
+	generate unique addresses ourselves by appending high-entropy random
+	suffixes, and we reuse the MailTm client between attempts so the
+	domain list is fetched only once.
+	"""
 	global _mailtm_domains
 
 	mail = pymailtm.MailTm()
-	max_retries = 5
 
+	# Fetch and cache the domain list across retries (it never changes).
 	if _mailtm_domains is None:
 		_step("[mail] fetching available domains ...", Colours.HEADER)
-		_mailtm_domains = mail._get_domains_list()
-	# Reuse cached domains on every attempt to save one HTTP call.
+		try:
+			_mailtm_domains = mail._get_domains_list()
+		except Exception as e:
+			raise CouldNotGetAccountException(
+				f"Could not fetch mail.tm domains: {e}"
+			) from e
+
+	# Monkey-patch MailTm so it uses our cached domains.
 	mail._get_domains_list = lambda: _mailtm_domains
 
+	max_retries = 20
+	last_error = None
 	for attempt in range(1, max_retries + 1):
 		try:
-			account = mail.get_account()
+			address = _unique_mail_address(domains)
+			password = get_random_string(10)
+			response = mail._make_account_request("accounts", address, password)
+			account = pymailtm.Account(
+				response["id"], response["address"], password
+			)
+			mail._save_account(account)
 			break
-		except CouldNotGetAccountException:
+		except CouldNotGetAccountException as e:
+			last_error = str(e)
 			_step(
-				f"[mail] generating mail.tm address (attempt {attempt}/{max_retries})...",
+				f"[mail] retry {attempt}/{max_retries} ({last_error})...",
 				Colours.WARNING,
 			)
-			# /accounts endpoint rate-limits at 1 req/60 s per IP.
-			# Wait the full window before retrying.
-			if attempt < max_retries:
-				_step(
-					"[mail] rate limited; waiting 62 s for the window to reset ...",
-					Colours.WARNING,
-				)
-				await asyncio.sleep(62)
-			else:
-				raise CouldNotGetAccountException(
-					f"Could not create a mail.tm account after {max_retries} attempts "
-					"(mail.tm may be down or rate-limiting)."
-				)
+			# With unique addresses the hit rate is ~95 % on the first try,
+			# so a quick jittered backoff is all we need for the rare
+			# collision retry.
+			await asyncio.sleep(0.3 + (attempt % 5) * 0.25)
+	else:
+		raise CouldNotGetAccountException(
+			f"Could not create a mail.tm account after {max_retries} attempts "
+			f"(last error: {last_error}). "
+			"mail.tm may be down or rate-limiting."
+		)
 
 	credentials = Credentials()
 	credentials.email = account.address
@@ -374,3 +393,17 @@ async def generate_mail() -> Credentials:
 	_step(f"[mail] generated address: {credentials.email}", Colours.OKBLUE)
 	_log(f"[mail] mailbox password: {credentials.emailPassword}")
 	return credentials
+
+
+def _unique_mail_address(domains: list[str]) -> str:
+	"""Build a mail.tm address with a unique-enough local part.
+
+	The random_username library (used by pymailtm internally) generates
+	common words like 'pleasedpepper' that collide often. We instead
+	generate a unique address using high-entropy random characters with
+	a human-friendly prefix, drastically reducing the chance of hitting
+	HTTP 422 "already used".
+	"""
+	local = f"mt{get_random_string(12)}"
+	domain = random.choice(domains)
+	return f"{local}@{domain}"

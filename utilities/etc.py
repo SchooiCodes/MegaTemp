@@ -9,7 +9,7 @@ import sys
 from mega import Mega
 import psutil
 
-from utilities.types import Colours, Credentials
+from utilities.models import Colours, Credentials
 
 VERSION = "v1.1.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
@@ -17,19 +17,36 @@ mega = Mega()
 
 
 def clear_tmp() -> bool:
-	"""Clears tmp folder."""
-	max_attempts = 1
+	"""Clears tmp folder.
 
-	for _ in range(max_attempts):
-		if os.path.exists("tmp"):
-			try:
-				shutil.rmtree("tmp")
-				return True
-			except PermissionError:
-				matches = ["CrashpadMetrics-active.pma", "CrashpadMetrics.pma"]
+	If the initial deletion fails with a permission error (common when
+	Chrome's crashpad holds file locks) we kill the locking processes and
+	retry once. A missing tmp/ is treated as success.
+	"""
+	if not os.path.exists("tmp"):
+		return True
+
+	matches = ["CrashpadMetrics-active.pma", "CrashpadMetrics.pma"]
+
+	for attempt in range(2):
+		try:
+			shutil.rmtree("tmp")
+			return True
+		except PermissionError:
+			if attempt == 0:
 				kill_process(matches)
+			else:
+				p_print(
+					"Failed to clear tmp/ even after killing lock holders.",
+					Colours.FAIL,
+				)
+				return False
+		except FileNotFoundError:
+			return True
+		except OSError as e:
+			p_print(f"Failed to clear tmp/: {e}", Colours.FAIL)
+			return False
 
-	# If we've reached this point, all attempts have failed
 	return False
 
 
@@ -84,12 +101,20 @@ def delete_default(credentials: Credentials):
 		return
 
 
-def reinstall_tenacity():  # sourcery skip: extract-method
+def reinstall_tenacity():
 	"""Reinstalls tenacity because of a dependency problem within the mega.py library."""
 	try:
 		p_print("Reinstalling tenacity...", Colours.WARNING)
-		os.system("python -m pip uninstall tenacity -y")
-		os.system("python -m pip install tenacity")
+		pip = os.path.join(os.path.dirname(sys.executable), "pip")
+		if not os.path.exists(pip):
+			pip = "pip"
+		ret = os.system(f"{pip} uninstall tenacity -y")
+		if ret != 0:
+			p_print("Failed to uninstall old tenacity, continuing anyway...", Colours.WARNING)
+		ret = os.system(f"{pip} install tenacity")
+		if ret != 0:
+			p_print("Failed to install tenacity.", Colours.FAIL)
+			sys.exit(1)
 		clear_console()
 		p_print("Reinstalled tenacity successfully!", Colours.OKGREEN)
 		p_print("Please rerun the program.", Colours.WARNING)

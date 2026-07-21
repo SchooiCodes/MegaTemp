@@ -6,7 +6,7 @@ import json
 import sys
 
 from utilities.etc import p_print
-from utilities.types import Colours, Credentials, Config
+from utilities.models import Colours, Credentials, Config
 
 CONFIG_FILE = "config.json"
 
@@ -15,7 +15,6 @@ def read_config() -> Config | None:
 	"""
 	Reads the config file and returns the contents as a dictionary.
 	"""
-	json_data: dict[str, str]
 
 	if not os.path.exists(CONFIG_FILE):
 		return None
@@ -25,7 +24,7 @@ def read_config() -> Config | None:
 		write_default_config()
 		return None
 	try:
-		json_data = json.loads(raw)
+		json_data: dict[str, str] = json.loads(raw)
 	except json.JSONDecodeError as e:
 		p_print(f"Config file is corrupted ({e}); ignoring it.", Colours.WARNING)
 		# Back up the broken file so the user can inspect it, then start fresh.
@@ -36,12 +35,17 @@ def read_config() -> Config | None:
 		write_default_config()
 		return None
 
-	for k, v in Config().__dict__.items():
-		if k not in json_data:
-			write_config(k, v, Config(**json_data))
-			json_data[k] = v
+	# Reconcile any missing keys from a newer version of the config schema.
+	defaults = asdict(Config())
+	missing = {k: v for k, v in defaults.items() if k not in json_data}
+	if missing:
+		json_data.update(missing)
+		merged = Config(**json_data)
+		write_config("executablePath", merged.executablePath, merged)
+	else:
+		merged = Config(**json_data)
 
-	return Config(**json_data)
+	return merged
 
 
 def concrete_read_config() -> Config:
@@ -112,9 +116,7 @@ def save_credentials(credentials: Credentials, account_format: str) -> None:
 
 	try:
 		with open(f"credentials/{safe_name}.json", "w", encoding="utf-8") as file:
-			data = asdict(credentials)
-			data.pop("id", None)
-			file.write(json.dumps(data, indent=2))
+			file.write(json.dumps(asdict(credentials), indent=2))
 	except OSError as e:
 		p_print(f"Failed to write credentials file: {e}", Colours.FAIL)
 

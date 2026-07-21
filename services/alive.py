@@ -35,7 +35,7 @@ def keepalive(verbose: bool):
 		path = f"./credentials/{file}"
 		try:
 			with open(path, "r", encoding="utf-8") as f:
-				credentials = json.JSONDecoder().decode(f.read())
+				credentials = json.load(f)
 		except (json.JSONDecodeError, OSError) as e:
 			p_print(f"Skipping unreadable credential file {file}: {e}", Colours.WARNING)
 			continue

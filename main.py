@@ -30,7 +30,7 @@ from utilities.web import (
 	get_mail,
 	set_verbose,
 )
-from pymailtm.pymailtm import CouldNotGetMessagesException
+from pymailtm.pymailtm import CouldNotGetAccountException, CouldNotGetMessagesException
 from utilities.etc import (
 	Credentials,
 	p_print,
@@ -184,8 +184,12 @@ def setup() -> Tuple[str, Config]:
 	config = read_config()
 
 	if config is None:
-		write_default_config()
-		config = concrete_read_config()
+		config = write_default_config()
+		# write_default_config may return None if the file already had content
+		# (in which case read_config had a transient failure). Fall back to
+		# concrete_read_config which errors on truly absent files.
+		if config is None:
+			config = concrete_read_config()
 	else:
 		executable_path = config.executablePath
 
@@ -302,9 +306,10 @@ async def register(
 	try:
 		for attempt in range(1, max_attempts + 1):
 			separator(f"Registration attempt {attempt}/{max_attempts}")
-			credentials = await generate_mail()
-			page = await context.newPage()
+			page = None
 			try:
+				credentials = await generate_mail()
+				page = await context.newPage()
 				await type_name(page, credentials)
 				await type_password(page, credentials)
 				await finish_form(page, credentials)
@@ -319,7 +324,6 @@ async def register(
 						"Retrying with a new email address...",
 						Colours.WARNING,
 					)
-					await page.close()
 					continue
 
 				try:
@@ -331,19 +335,27 @@ async def register(
 						f"Retrying with a new email address (attempt {attempt}/{max_attempts})...",
 						Colours.WARNING,
 					)
-					await page.close()
 					continue
+			except CouldNotGetAccountException:
+				p_print(
+					f"Could not generate email address (attempt {attempt}/{max_attempts}). "
+					"Retrying...",
+					Colours.WARNING,
+				)
+				continue
 			except Exception as e:
 				p_print(
 					f"Registration step failed ({e}). "
 					f"Retrying with a new email address (attempt {attempt}/{max_attempts})...",
 					Colours.WARNING,
 				)
-				try:
-					await page.close()
-				except Exception:
-					pass
 				continue
+			finally:
+				if page is not None:
+					try:
+						await page.close()
+					except Exception:
+						pass
 	finally:
 		# Always release the browser, even if we gave up or crashed mid-flow.
 		try:
@@ -357,6 +369,10 @@ async def register(
 			Colours.FAIL,
 		)
 		sys.exit(1)
+
+	# After the guard above, credentials is guaranteed to have been set by
+	# a successful loop iteration. Assert for mypy's sake.
+	assert credentials is not None
 
 	p_print(
 		f"Account verified in {elapsed(start)}.",
@@ -498,9 +514,8 @@ def _action_keepalive(config):
 	pause("Press Enter to return to the menu...")
 
 
-def _action_upload(executable_path, config):
+def _action_upload(_unused_executable_path, config):
 	"""Prompt for a file and (optional) public link, then upload."""
-	_ = executable_path
 	path = prompt_text("Path to file to upload")
 	if not path or not os.path.exists(path):
 		p_print("File not found.", Colours.FAIL)

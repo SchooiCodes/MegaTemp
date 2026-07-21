@@ -21,10 +21,7 @@ class Credentials:
 	email: str = ""
 	emailPassword: str = ""
 	password: str = ""
-	id = ""
-
-	__delitem__ = dict.__delitem__
-	__getitem__ = dict.__getitem__
+	id: str = ""
 
 
 @dataclass
