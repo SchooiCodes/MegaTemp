@@ -721,5 +721,40 @@ class TestMain:
 			assert "Traceback" not in (e.stderr or ""), f"Crash: {e.stderr}"
 
 
+# ======================================================================
+# download.py
+# ======================================================================
+
+
+class TestDownload:
+	def test_list_files_no_creds_returns_empty(self):
+		from services.download import list_files
+		from utilities.models import Credentials
+
+		creds = Credentials("nonexistent@test.test", "pw", "pw")
+		result = list_files(creds)
+		assert isinstance(result, list)
+
+	def test_download_file_no_creds_returns_none(self):
+		from services.download import download_file
+		from utilities.models import Credentials
+
+		creds = Credentials("nonexistent@test.test", "pw", "pw")
+		result = download_file(creds, "nonexistent-id", "/tmp")
+		assert result is None
+
+	def test_separator_no_title(self):
+		from services.download import separator
+		from utilities.models import Colours
+
+		separator(colour=Colours.HEADER, width=20)
+
+	def test_separator_with_title(self):
+		from services.download import separator
+		from utilities.models import Colours
+
+		separator("Hello", colour=Colours.OKGREEN, width=30)
+
+
 if __name__ == "__main__":
 	pytest.main([__file__, "-v", "--tb=short"])
