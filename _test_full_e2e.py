@@ -771,16 +771,134 @@ class TestDownload:
 		assert "Traceback" not in result.stderr
 
 	def test_separator_no_title(self):
-		from services.download import separator
+		from utilities.etc import separator
 		from utilities.models import Colours
 
 		separator(colour=Colours.HEADER, width=20)
 
 	def test_separator_with_title(self):
-		from services.download import separator
+		from utilities.etc import separator
 		from utilities.models import Colours
 
 		separator("Hello", colour=Colours.OKGREEN, width=30)
+
+
+# ======================================================================
+# utilities/password_strength.py
+# ======================================================================
+
+
+class TestPasswordStrength:
+	def test_entropy_empty(self):
+		from utilities.password_strength import estimate_entropy
+
+		assert estimate_entropy("") == 0.0
+
+	def test_entropy_non_empty(self):
+		from utilities.password_strength import estimate_entropy
+
+		assert estimate_entropy("abc") > 0
+
+	def test_strength_labels(self):
+		from utilities.password_strength import strength_label
+
+		label, colour = strength_label("a")
+		assert label in ("Very Weak", "Weak", "Medium", "Strong", "Very Strong")
+		assert colour.startswith("\033[")
+
+	def test_strong_password(self):
+		from utilities.password_strength import strength_label
+
+		label, _ = strength_label("Tr0ub4dor&3!@#xYzQwerty123!!!")
+		assert label in ("Strong", "Very Strong")
+
+
+# ======================================================================
+# utilities/retry.py
+# ======================================================================
+
+
+class TestRetry:
+	def test_retry_success_first_try(self):
+		from utilities.retry import retry
+
+		called = 0
+
+		@retry(max_attempts=3, label="test")
+		def fn():
+			nonlocal called
+			called += 1
+			return 42
+
+		assert fn() == 42
+		assert called == 1
+
+	def test_retry_eventually_succeeds(self):
+		from utilities.retry import retry
+
+		called = 0
+
+		@retry(max_attempts=3, label="test")
+		def fn():
+			nonlocal called
+			called += 1
+			if called < 3:
+				raise ConnectionError("transient")
+			return "ok"
+
+		assert fn() == "ok"
+		assert called == 3
+
+	def test_retry_exhausted(self):
+		from utilities.retry import retry
+
+		@retry(max_attempts=2, label="test")
+		def fn():
+			raise ValueError("always fails")
+
+		import pytest as _pt
+
+		with _pt.raises(ValueError):
+			fn()
+
+
+# ======================================================================
+# utilities/provider.py — provider registry
+# ======================================================================
+
+
+class TestProviderRegistry:
+	def test_get_provider_unknown(self):
+		from utilities.provider import get_provider
+
+		assert get_provider("nonexistent_provider") is None
+
+	def test_get_provider_names_contains_defaults(self):
+		from utilities.provider import get_provider_names
+
+		names = get_provider_names()
+		assert "mailtm" in names
+		assert "guerrillamail" in names
+
+	def test_get_provider_mailtm(self):
+		from utilities.provider import get_provider
+
+		prov = get_provider("mailtm")
+		assert prov is not None
+		assert prov.name == "mailtm"
+
+
+# ======================================================================
+# utilities/etc.py — notify
+# ======================================================================
+
+
+class TestNotify:
+	def test_notify_no_crash(self):
+		from utilities.etc import notify
+
+		# Should not raise — best effort
+		notify("Test title", "Test message")
 
 
 if __name__ == "__main__":
