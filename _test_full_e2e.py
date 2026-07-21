@@ -901,5 +901,75 @@ class TestNotify:
 		notify("Test title", "Test message")
 
 
+# ======================================================================
+# utilities/fs.py — config validation
+# ======================================================================
+
+
+class TestConfigValidation:
+	def test_validate_empty(self):
+		from utilities.fs import _validate_config
+
+		_validate_config({})  # no crash
+
+	def test_validate_bad_exec_path(self):
+		from utilities.fs import _validate_config
+
+		_validate_config({"executablePath": "/nonexistent/chromium"})  # no crash
+
+	def test_validate_bad_attempts(self):
+		from utilities.fs import _validate_config
+
+		_validate_config({"maxAttempts": 999})  # no crash
+
+	def test_validate_bad_proxy(self):
+		from utilities.fs import _validate_config
+
+		_validate_config({"proxy": "not-a-proxy"})  # no crash
+
+
+# ======================================================================
+# services/upload.py — retry on upload
+# ======================================================================
+
+
+class TestUploadRetry:
+	def test_upload_file_not_found(self):
+		from services.upload import upload_file
+		from utilities.models import Credentials
+
+		creds = Credentials("test@test.test", "pw", "pw")
+		upload_file(False, "/nonexistent/file.txt", creds)  # no crash
+
+
+# ======================================================================
+# main.py — CLI dispatch edge cases
+# ======================================================================
+
+
+class TestMainCLI:
+	def test_main_list_cloud_no_crash(self):
+		import subprocess
+
+		result = subprocess.run(
+			[sys.executable, "main.py", "--list-cloud"],
+			capture_output=True,
+			text=True,
+			timeout=30,
+		)
+		assert "Traceback" not in result.stderr
+
+	def test_main_download_cloud_no_crash(self):
+		import subprocess
+
+		result = subprocess.run(
+			[sys.executable, "main.py", "--download-cloud", "test-id"],
+			capture_output=True,
+			text=True,
+			timeout=30,
+		)
+		assert "Traceback" not in result.stderr
+
+
 if __name__ == "__main__":
 	pytest.main([__file__, "-v", "--tb=short"])
