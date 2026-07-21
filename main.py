@@ -305,6 +305,12 @@ parser.add_argument(
 	default=".",
 	help="Destination directory for --download-cloud (default: current dir).",
 )
+parser.add_argument(
+	"--version",
+	required=False,
+	action="store_true",
+	help="Show version and exit.",
+)
 
 console_args = parser.parse_args()
 
@@ -1414,7 +1420,10 @@ if __name__ == "__main__":
 		p_print("Failed while setting up!", Colours.FAIL)
 		sys.exit(1)
 
-	if console_args.list_cloud:
+	if console_args.version:
+		p_print(f"MegaTemp {VERSION}", Colours.OKGREEN)
+		sys.exit(0)
+	elif console_args.list_cloud:
 		from services.download import _action_browse_cloud
 
 		_action_browse_cloud(executable_path, config)

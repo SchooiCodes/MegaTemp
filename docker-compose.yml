@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  megatem:
+    build: .
+    image: megatem:latest
+    container_name: megatem
+    volumes:
+      # Persist credentials across container restarts
+      - ./credentials:/app/credentials
+      - ./config.json:/app/config.json
+      # Mount credentials directory so the host can access exported files
+      - ./credentials.txt:/app/credentials.txt
+    # Override the default --help command
+    command: ["python", "main.py"]
+    # For interactive TUI mode, allocate a TTY
+    stdin_open: true
+    tty: true
+    # Capabilities needed for Chromium
+    cap_add:
+      - SYS_ADMIN
