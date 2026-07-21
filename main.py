@@ -263,6 +263,13 @@ parser.add_argument(
 	help="When used with --keepalive, delete credential files for accounts that fail login.",
 )
 parser.add_argument(
+	"--interval",
+	required=False,
+	type=float,
+	default=0,
+	help="When used with --keepalive, loop continuously every N hours.",
+)
+parser.add_argument(
 	"--resume",
 	required=False,
 	action="store_true",
@@ -891,6 +898,13 @@ def _action_view_credentials(config):
 				pw_display = pw if pw else "?"
 			else:
 				pw_display = ("*" * max(len(pw) - 2, 0)) + pw[-2:] if pw else "?"
+			# Strength indicator when shown
+			strength_info = ""
+			if _show_passwords and pw:
+				from utilities.password_strength import strength_label
+
+				_label, _colour = strength_label(pw)
+				strength_info = f" {_colour}{_label}\033[0m"
 			size = os.path.getsize(path)
 			tags_str = data.get("tags", "")
 			notes_str = data.get("notes", "")
@@ -899,7 +913,7 @@ def _action_view_credentials(config):
 			marker = ">" if idx == _selected else " "
 			p_print(
 				f" {marker} {email:<38} pw:{pw_display:<14} {size}B{tag_display}"
-				f"{note_display}",
+				f"{note_display}{strength_info}",
 				Colours.OKGREEN if idx == _selected else Colours.OKCYAN,
 			)
 		p_print(
@@ -1004,7 +1018,7 @@ def _action_export(config):
 
 
 def _action_storage(config):
-	"""Show storage quota for all saved accounts."""
+	"""Show health dashboard — quota, status, age, notes for all accounts."""
 	from utilities.fs import list_credentials
 
 	creds_list = list_credentials()
@@ -1014,19 +1028,35 @@ def _action_storage(config):
 		return
 
 	from mega import Mega
+	import datetime
 
-	p_print("Querying storage for each account...", Colours.HEADER)
+	alive = 0
+	dead = 0
+	p_print("Health dashboard — querying storage for each account...", Colours.HEADER)
 	for _fname, creds, _mtime in creds_list:
+		age = datetime.datetime.now() - datetime.datetime.fromtimestamp(_mtime)
+		days = age.days
+		tag_str = f" [{creds.tags}]" if creds.tags else ""
 		try:
 			mega = Mega()
 			mega.login(creds.email, creds.password)
 			quota = mega.get_quota() / (1024**3)
 			p_print(
-				f"  {creds.email:<40} {quota:.2f} GB free",
+				f"  {'✓':>3} {creds.email:<35} {quota:>5.1f} GB  {days:>3}d old"
+				f"{tag_str}",
 				Colours.OKGREEN,
 			)
-		except Exception as e:
-			p_print(f"  {creds.email:<40} Error: {e}", Colours.FAIL)
+			alive += 1
+		except Exception:
+			p_print(
+				f"  {'✗':>3} {creds.email:<35} {'DEAD':>8}  {days:>3}d old{tag_str}",
+				Colours.FAIL,
+			)
+			dead += 1
+	separator(
+		f"Summary: {alive} alive / {dead} dead / {len(creds_list)} total",
+		Colours.HEADER,
+	)
 	pause("Press Enter to return to the menu...")
 
 
@@ -1303,6 +1333,21 @@ def _sigint_handler(signum, frame):
 	sys.exit(0)
 
 
+def _loop_keepalive(verbose: bool, prune: bool, interval_hours: float):
+	"""Run keepalive in a loop every ``interval_hours``."""
+	import time as _time
+
+	interval_secs = interval_hours * 3600
+	p_print(
+		f"Keepalive loop: every {interval_hours:.1f}h (Ctrl+C to stop).",
+		Colours.HEADER,
+	)
+	while True:
+		keepalive(verbose, prune=prune)
+		separator(f"Next run in {interval_hours:.1f}h", Colours.WARNING)
+		_time.sleep(interval_secs)
+
+
 def _setup_signal_handlers():
 	import signal
 
@@ -1350,7 +1395,12 @@ if __name__ == "__main__":
 		extract_credentials(config.accountFormat)
 	elif console_args.keepalive:
 		p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)
-		keepalive(console_args.verbose, prune=console_args.prune)
+		if console_args.interval > 0:
+			_loop_keepalive(
+				console_args.verbose, console_args.prune, console_args.interval
+			)
+		else:
+			keepalive(console_args.verbose, prune=console_args.prune)
 	elif console_args.loop is not None and console_args.loop > 1:
 		if console_args.parallel > 1:
 			parallel_registrations(
