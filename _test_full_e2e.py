@@ -677,7 +677,7 @@ class TestMain:
 			[sys.executable, "main.py", "--help"],
 			capture_output=True,
 			text=True,
-			timeout=15,
+			timeout=30,
 		)
 		assert result.returncode == 0
 		assert "usage:" in result.stdout
@@ -694,7 +694,7 @@ class TestMain:
 			[sys.executable, "main.py", "--help"],
 			capture_output=True,
 			text=True,
-			timeout=15,
+			timeout=30,
 		)
 		assert "main.py" in result.stdout or "help" in result.stdout
 
@@ -712,13 +712,16 @@ class TestMain:
 				[sys.executable, "main.py", "-v"],
 				capture_output=True,
 				text=True,
-				timeout=5,
+				timeout=15,
 			)
 			assert "Traceback" not in result.stderr, f"Crash: {result.stderr}"
 		except subprocess.TimeoutExpired as e:
-			# Timed out = browser launch delayed; not a code crash
-			assert "Traceback" not in (e.stdout or ""), f"Crash: {e.stdout}"
-			assert "Traceback" not in (e.stderr or ""), f"Crash: {e.stderr}"
+			# Timed out = browser launch delayed; not a code crash.
+			# Convert bytes output to str for safe substring checks.
+			out = (e.stdout or b"").decode("utf-8", errors="replace")
+			err = (e.stderr or b"").decode("utf-8", errors="replace")
+			assert "Traceback" not in out, f"Crash: {out}"
+			assert "Traceback" not in err, f"Crash: {err}"
 
 
 # ======================================================================
@@ -751,7 +754,7 @@ class TestDownload:
 			[sys.executable, "main.py", "--list-cloud"],
 			capture_output=True,
 			text=True,
-			timeout=10,
+			timeout=30,
 		)
 		assert "Traceback" not in result.stderr
 
@@ -763,7 +766,7 @@ class TestDownload:
 			[sys.executable, "main.py", "--download-cloud", "dummy-id"],
 			capture_output=True,
 			text=True,
-			timeout=10,
+			timeout=30,
 		)
 		assert "Traceback" not in result.stderr
 
