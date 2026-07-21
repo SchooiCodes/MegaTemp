@@ -1027,6 +1027,18 @@ class TestMainCLI:
 		assert result.returncode != 0
 		assert "Unknown provider" in result.stdout  # p_print goes to stdout
 
+	def test_main_health_flag_no_crash(self):
+		import subprocess
+
+		result = subprocess.run(
+			[sys.executable, "main.py", "--health"],
+			capture_output=True,
+			text=True,
+			timeout=30,
+		)
+		assert "Traceback" not in result.stderr
+		assert "No saved credentials" in result.stdout or "Health dashboard" in result.stdout
+
 
 if __name__ == "__main__":
 	pytest.main([__file__, "-v", "--tb=short"])

@@ -319,6 +319,12 @@ parser.add_argument(
 	default=None,
 	help='Email provider: "mailtm" (default) or "guerrillamail".',
 )
+parser.add_argument(
+	"--health",
+	required=False,
+	action="store_true",
+	help="Show health dashboard (quota, age, status) for all saved accounts.",
+)
 
 console_args = parser.parse_args()
 
@@ -1451,6 +1457,9 @@ if __name__ == "__main__":
 
 	if console_args.version:
 		p_print(f"MegaTemp {VERSION}", Colours.OKGREEN)
+		sys.exit(0)
+	elif console_args.health:
+		_action_storage(config)
 		sys.exit(0)
 	elif console_args.list_cloud:
 		from services.download import _action_browse_cloud
