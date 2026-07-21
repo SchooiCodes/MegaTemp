@@ -22,6 +22,8 @@ class Credentials:
 	emailPassword: str = ""
 	password: str = ""
 	id: str = ""
+	notes: str = ""
+	tags: str = ""  # comma-separated tag list
 
 
 @dataclass

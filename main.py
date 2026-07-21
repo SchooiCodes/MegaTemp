@@ -892,13 +892,19 @@ def _action_view_credentials(config):
 			else:
 				pw_display = ("*" * max(len(pw) - 2, 0)) + pw[-2:] if pw else "?"
 			size = os.path.getsize(path)
+			tags_str = data.get("tags", "")
+			notes_str = data.get("notes", "")
+			tag_display = f" [{tags_str}]" if tags_str else ""
+			note_display = f" {notes_str[:20]}" if notes_str else ""
 			marker = ">" if idx == _selected else " "
 			p_print(
-				f" {marker} {email:<38} pw:{pw_display:<14} {size}B",
+				f" {marker} {email:<38} pw:{pw_display:<14} {size}B{tag_display}"
+				f"{note_display}",
 				Colours.OKGREEN if idx == _selected else Colours.OKCYAN,
 			)
 		p_print(
-			"  [p] reveal  [c] copy email  [C] copy pw  [d] delete  [q] back",
+			"  [p] reveal  [c] copy email  [C] copy pw  [d] delete"
+			"  [n] notes  [t] tag  [q] back",
 			Colours.WARNING,
 		)
 		key = input().strip().lower()
@@ -906,6 +912,36 @@ def _action_view_credentials(config):
 			break
 		elif key == "p":
 			_show_passwords = not _show_passwords
+		elif key == "n" and json_files:
+			target = json_files[_selected]
+			path = os.path.join(folder, target)
+			try:
+				with open(path, "r", encoding="utf-8") as fh:
+					data = json.load(fh)
+				cur_notes = data.get("notes", "")
+				new_notes = prompt_text(f"Notes for {target}", default=cur_notes)
+				if new_notes is not None:
+					data["notes"] = new_notes
+					with open(path, "w", encoding="utf-8") as fh:
+						json.dump(data, fh, indent=2)
+			except (OSError, json.JSONDecodeError) as e:
+				p_print(f"Failed to update notes: {e}", Colours.FAIL)
+		elif key == "t" and json_files:
+			target = json_files[_selected]
+			path = os.path.join(folder, target)
+			try:
+				with open(path, "r", encoding="utf-8") as fh:
+					data = json.load(fh)
+				cur_tags = data.get("tags", "")
+				new_tags = prompt_text(
+					f"Tags for {target} (comma-separated)", default=cur_tags
+				)
+				if new_tags is not None:
+					data["tags"] = new_tags
+					with open(path, "w", encoding="utf-8") as fh:
+						json.dump(data, fh, indent=2)
+			except (OSError, json.JSONDecodeError) as e:
+				p_print(f"Failed to update tags: {e}", Colours.FAIL)
 		elif key == "d" and json_files:
 			target = json_files[_selected]
 			if prompt_yes_no(f"Delete {target}? (cannot undo)"):

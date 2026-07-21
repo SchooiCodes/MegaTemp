@@ -198,6 +198,8 @@ def list_credentials() -> list[tuple[str, Credentials, float]]:
 			emailPassword=data.get("emailPassword", ""),
 			password=data.get("password", ""),
 			id=data.get("id", ""),
+			notes=data.get("notes", ""),
+			tags=data.get("tags", ""),
 		)
 		mtime = os.path.getmtime(path)
 		result.append((os.path.basename(path), creds, mtime))
