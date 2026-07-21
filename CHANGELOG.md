@@ -99,8 +99,17 @@ All notable changes to MegaTemp are documented here. This project adheres to
 - **`--provider NAME` CLI flag** — selects email provider (`mailtm` or
   `guerrillamail`) from headless/scripted invocations; threaded through
   `register()`, `loop_registrations()`, and `parallel_registrations()`.
+- **`--health` CLI flag** — show storage health dashboard from the command line
+  (previously TUI-only).
+- **`--health --json`** — machine-readable JSON output with per-account status,
+  quota, age, and summary.
+- **Provider validation at CLI** — `--provider bad-name` errors immediately
+  with list of valid providers.
 - **`docker-compose.yml`** — one-command Docker Compose setup with volume
   mounts for credential persistence and TTY allocation for interactive mode.
+- **Makefile** — common dev commands (`make run`, `make test`, `make lint`,
+  `make format`, `make clean`, `make release`).
+- **`.editorconfig`** — consistent editor settings for tab/space/encoding.
 
 ### Added (post-v1.3.0-tag — packaging)
 - **Dockerfile** — `python:3.12-slim` with Chromium + MegaTemp.
@@ -122,6 +131,8 @@ All notable changes to MegaTemp are documented here. This project adheres to
 - 91 tests (was 84) — added config validation, edge case, and menu tests.
 - 94 tests (was 91) — added prompt_path, prompt_text lifecycle tests, version
   flag test coverage.
+- 98 tests (was 94) — added provider validation, health flag, JSON output tests.
+- 99 tests (was 98) — added --health --json output structure test.
 - All existing tests preserved.
 
 ## [v1.2.0] - 2026-07-21
