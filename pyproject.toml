@@ -1,6 +1,11 @@
 [tool.mypy]
 disable_error_code = "import-untyped"
 
+[tool.pytest.ini_options]
+testpaths = ["_test_full_e2e.py"]
+filterwarnings = ["ignore::DeprecationWarning"]
+addopts = "-q --tb=short -k 'not test_main_verbose_flag'"
+
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
 exclude = [
