@@ -191,6 +191,11 @@ parser.add_argument(
 	"-f", "--file", required=False, help="Uploads a file to the account."
 )
 parser.add_argument(
+	"--upload-dir",
+	required=False,
+	help="Upload all files in a directory (non-recursive).",
+)
+parser.add_argument(
 	"-p",
 	"--public",
 	required=False,
@@ -696,6 +701,26 @@ async def register(
 			upload_file(console_args.public, console_args.file, credentials)
 		else:
 			p_print("File not found or invalid.", Colours.FAIL)
+	elif console_args.upload_dir is not None:
+		if not os.path.isdir(console_args.upload_dir):
+			p_print(f"Directory not found: {console_args.upload_dir}", Colours.FAIL)
+		else:
+			import glob as _glob
+
+			files = sorted(
+				f
+				for f in _glob.glob(os.path.join(console_args.upload_dir, "*"))
+				if os.path.isfile(f)
+			)
+			if not files:
+				p_print(f"No files in {console_args.upload_dir}", Colours.WARNING)
+			else:
+				p_print(
+					f"Uploading {len(files)} file(s) from {console_args.upload_dir}...",
+					Colours.HEADER,
+				)
+				for f in files:
+					upload_file(console_args.public, f, credentials)
 	if console_args.loop is None or console_args.loop <= 1:
 		p_print("Done.", Colours.OKGREEN)
 		sys.exit(0)
@@ -1023,6 +1048,41 @@ def _action_edit_config(_unused_executable_path, config):
 	pause("Press Enter to return to the menu...")
 
 
+def _action_upload_dir(_unused_executable_path, config):
+	"""Prompt for a directory, then upload all files inside (non-recursive)."""
+	import glob
+
+	path = os.path.expanduser(prompt_text("Path to directory to upload"))
+	if not os.path.isdir(path):
+		p_print(f"Directory not found: {path}", Colours.FAIL)
+		pause()
+		return
+	files = sorted(f for f in glob.glob(os.path.join(path, "*")) if os.path.isfile(f))
+	if not files:
+		p_print(f"No files found in {path}", Colours.WARNING)
+		pause()
+		return
+	public = prompt_yes_no("Generate public share links?")
+	p_print(f"Uploading {len(files)} file(s) from {path}...", Colours.HEADER)
+	jsons = sorted(
+		glob.glob("./credentials/*.json"), key=os.path.getmtime, reverse=True
+	)
+	if not jsons:
+		p_print("No saved credentials to upload with.", Colours.FAIL)
+		pause()
+		return
+	import json
+
+	with open(jsons[0], "r", encoding="utf-8") as fh:
+		data = json.load(fh)
+	creds = Credentials(
+		data.get("email", ""), data.get("emailPassword", ""), data.get("password", "")
+	)
+	for f in files:
+		upload_file(public, f, creds)
+	pause("Press Enter to return to the menu...")
+
+
 def _action_upload(_unused_executable_path, config):
 	"""Prompt for a file and (optional) public link, then upload."""
 	while True:
@@ -1146,6 +1206,11 @@ def _run_tui(executable_path, config):
 				"Upload File",
 				lambda: _action_upload(executable_path, config),
 				"Upload a file to the latest account",
+			),
+			MenuItem(
+				"Upload Directory",
+				lambda: _action_upload_dir(executable_path, config),
+				"Upload all files in a folder",
 			),
 			MenuItem(
 				"Settings",

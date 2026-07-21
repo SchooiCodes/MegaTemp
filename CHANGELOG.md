@@ -40,6 +40,17 @@ All notable changes to MegaTemp are documented here. This project adheres to
 - **Expanded browser detection** — added NixOS, Flatpak, Snap, Homebrew,
   macOS `.app` bundle, and `%LOCALAPPDATA%` paths.
 
+### Added (post-v1.3.0-tag)
+- **Batch upload** — `--upload-dir <path>` CLI flag and `Upload Directory` TUI
+  option uploads all files in a folder to the most recent account.
+- **Upload progress spinner** — animated `| / - \` while mega.upload runs.
+- **Storage info viewer** — TUI menu option queries free quota for each saved
+  account (via `mega.get_quota()`).
+- **JSON Lines export** — `--export-jsonl` flag and Settings toggle write each
+  account to `credentials/accounts.jsonl`.
+- **Clipboard copy** — `c` copies email, `C` copies password to clipboard in
+  the credentials viewer (requires `pyperclip`).
+
 ### Fixed
 - `@dataclass` import missing in `etc.py` on fresh module load.
 - Syntax error in CLI dispatch after keepalive/prune merge.
