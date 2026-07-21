@@ -133,6 +133,7 @@ All notable changes to MegaTemp are documented here. This project adheres to
   flag test coverage.
 - 98 tests (was 94) — added provider validation, health flag, JSON output tests.
 - 99 tests (was 98) — added --health --json output structure test.
+- 100 tests (was 99) — added --json guard (requires --health) and expanded provider validation.
 - All existing tests preserved.
 
 ## [v1.2.0] - 2026-07-21
