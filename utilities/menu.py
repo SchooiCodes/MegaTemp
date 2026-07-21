@@ -3,15 +3,24 @@
 Provides an interactive arrow-key driven menu. No external packages are used;
 we drive a raw terminal directly with ANSI escape codes so it works in any
 Linux terminal, tmux/screen session or SSH connection.
+
+On Windows (where ``termios`` / ``tty`` are not available) the keyboard
+reader falls back to ``msvcrt`` so the same menu works natively on all
+platforms.
 """
 
 import os
 import sys
-import tty
-import termios
 import select
 
 from utilities.etc import Colours, p_print
+
+_WINDOWS = sys.platform == "win32"
+if not _WINDOWS:
+	import tty
+	import termios
+else:
+	import msvcrt
 
 # Arrow keys arrive as either normal-mode (\x1b[A) or application-cursor-mode
 # (\x1bOA) sequences depending on the terminal; accept both.
@@ -105,12 +114,30 @@ class Menu:
 	def _get_key():
 		"""Read a single key press.
 
-		Uses raw `os.read` on the terminal fd (not the buffered TextIOWrapper)
-		so escape sequences are captured byte-accurately. Arrow keys arrive as
-		a 3-byte sequence starting with \\x1b (either `\\x1b[A`/`\\x1b[B` in
-		normal mode or `\\x1bOA`/`\\x1bOB` in application-cursor mode); a lone
-		\\x1b with no following bytes within a short window is treated as Esc.
+		On Unix uses raw ``os.read`` on the terminal fd so escape sequences
+		are captured byte-accurately. Arrow keys arrive as a 3-byte sequence
+		starting with ``\\x1b`` (either ``\\x1b[A``/``\\x1b[B`` in normal
+		mode or ``\\x1bOA``/``\\x1bOB`` in application-cursor mode); a lone
+		``\\x1b`` with no following bytes within a short window is treated as
+		Esc.
+
+		On Windows falls back to ``msvcrt.getwch()`` and maps the extended
+		arrow codes back to the same escape sequences the Unix path produces.
 		"""
+		if _WINDOWS:
+			first = msvcrt.getwch()
+			if first == "\xe0":  # Extended key (arrows, etc.)
+				second = msvcrt.getwch()
+				mapping = {"H": UP[0], "P": DOWN[0], "K": LEFT[0], "M": RIGHT[0]}
+				return mapping.get(second, ESCAPE)
+			if first == "\x1b":
+				# Check if next char is available immediately
+				if msvcrt.kbhit():
+					return ESCAPE  # treat lone Esc as escape
+				return ESCAPE
+			if first == "\r":
+				return ENTER
+			return first
 		fd = sys.stdin.fileno()
 		old = termios.tcgetattr(fd)
 		try:

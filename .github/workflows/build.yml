@@ -40,6 +40,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+          # mega.py pins tenacity>=5.1.5,<6.0.0. Tenacity 5.x uses
+          # @asyncio.coroutine which was removed in Python 3.11, so it
+          # crashes at import time on Python 3.12. Force a version that
+          # works on modern Python runtimes.
+          pip install 'tenacity>=9.0.0' --upgrade --force-reinstall 2>/dev/null || true
           # mega.py depends on the obsolete pathlib backport
           # (<https://pypi.org/project/pathlib/>) which conflicts with
           # PyInstaller on Python 3.12+. Remove it since the stdlib

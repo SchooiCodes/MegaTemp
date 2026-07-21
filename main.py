@@ -8,6 +8,15 @@ import time
 from typing import Tuple
 import pyppeteer
 
+# tenacity (a transitive dependency of mega.py) uses @asyncio.coroutine
+# in its _asyncio module, which was removed in Python 3.11. If we're
+# running on a Python where it's absent, restore it as a no-op shim so
+# tenacity can still import cleanly. This works both for the frozen EXE
+# (built with PyInstaller on Python 3.12) and for source installs on
+# Python 3.11+.
+if not hasattr(asyncio, "coroutine"):
+	asyncio.coroutine = lambda f: f  # no-op decorator
+
 from services.alive import keepalive
 from services.upload import upload_file
 from services.extract import extract_credentials
