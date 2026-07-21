@@ -23,7 +23,7 @@ jobs:
             artifact: MegaTemp-linux
             binary: dist/MegaTemp
           - os: windows-latest
-            artifact: MegaTemp-windows
+            artifact: MegaTemp-windows.exe
             binary: dist/MegaTemp.exe
           - os: macos-latest
             artifact: MegaTemp-macos
