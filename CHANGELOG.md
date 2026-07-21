@@ -50,15 +50,22 @@ All notable changes to MegaTemp are documented here. This project adheres to
   account to `credentials/accounts.jsonl`.
 - **Clipboard copy** — `c` copies email, `C` copies password to clipboard in
   the credentials viewer (requires `pyperclip`).
+- **Cloud file browser** — `Browse Cloud` TUI option lists files in the most
+  recent account and offers download to a local directory.
+- **Account picker for uploads** — both `Upload File` and `Upload Directory`
+  now show a numbered list of saved accounts to choose from.
 
 ### Fixed
 - `@dataclass` import missing in `etc.py` on fresh module load.
 - Syntax error in CLI dispatch after keepalive/prune merge.
+- `--upload-dir` was not triggering the explicit-flags branch in CLI dispatch.
+- Parallel worker semaphore not held across `register()` call (all N workers
+  could launch simultaneously).
 - Unused imports cleaned across `main.py` and test file.
 
 ### Tests
-- 68 tests (was 58) — added proxy, checkpoint, config migration, keepalive,
-  merge_config, list_credentials test coverage.
+- 72 tests (was 68) — added download module tests (list_files, download_file
+  error handling, separator).
 - All existing tests preserved.
 
 ## [v1.2.0] - 2026-07-21
