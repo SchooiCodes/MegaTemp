@@ -1015,7 +1015,7 @@ class TestMainCLI:
 		assert result.returncode == 0
 		assert "v1.3.0" in result.stdout
 
-	def test_main_provider_validation_invalid(self):
+	def test_main_provider_validation_invalid_stderr(self):
 		import subprocess
 
 		result = subprocess.run(
@@ -1025,7 +1025,20 @@ class TestMainCLI:
 			timeout=10,
 		)
 		assert result.returncode != 0
-		assert "Unknown provider" in result.stdout  # p_print goes to stdout
+		# p_print may go to stdout or stderr depending on env, check both
+		assert "Unknown provider" in result.stdout + result.stderr
+
+	def test_main_json_requires_health(self):
+		import subprocess
+
+		result = subprocess.run(
+			[sys.executable, "main.py", "--json"],
+			capture_output=True,
+			text=True,
+			timeout=10,
+		)
+		assert result.returncode != 0
+		assert "--json requires --health" in result.stdout + result.stderr
 
 	def test_main_health_flag_no_crash(self):
 		import subprocess
