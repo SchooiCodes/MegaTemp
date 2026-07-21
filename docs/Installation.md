@@ -47,6 +47,34 @@ the `credentials/` folder.
 
 ---
 
+## Docker
+
+### Dockerfile
+
+```bash
+docker build -t megatem .
+docker run -it --cap-add=SYS_ADMIN megatem
+```
+
+The `--cap-add=SYS_ADMIN` flag is required for Chromium's sandbox to function
+inside the container. Credentials written to `/app/credentials/` are lost when
+the container exits unless you mount a volume:
+
+```bash
+docker run -it --cap-add=SYS_ADMIN -v ./credentials:/app/credentials megatem
+```
+
+### Docker Compose
+
+```bash
+docker compose up
+```
+
+The `docker-compose.yml` ships with volume mounts for `credentials/` and
+`config.json`, so everything persists across container restarts.
+
+---
+
 ## Standalone executable (no Python)
 
 Prebuilt binaries for **Linux, Windows, and macOS** are attached to every
