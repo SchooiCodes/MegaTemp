@@ -1,4 +1,4 @@
-.PHONY: run test lint format clean
+.PHONY: run test lint lint-fix format check format-check clean docker-build docker-run release
 
 # Default Python interpreter
 PYTHON ?= python3
@@ -7,10 +7,13 @@ run:
 	$(PYTHON) main.py
 
 test:
-	$(PYTHON) -m pytest _test_full_e2e.py -v --tb=short -k "not test_main_verbose_flag"
+	$(PYTHON) -m pytest --tb=short -k "not test_main_verbose_flag" -v
 
 lint:
 	ruff check .
+
+lint-fix:
+	ruff check --fix .
 
 format:
 	ruff format .
