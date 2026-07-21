@@ -875,14 +875,26 @@ def _action_view_credentials(config):
 
 	_show_passwords = False
 	_selected = 0
+	_filter = ""
 
 	while True:
+		# Filter files by email, notes, or tags
+		filtered = json_files
+		if _filter:
+			fl = _filter.lower()
+			filtered = [f for f in json_files if fl in f.lower()]
 		separator(
-			f"Saved credentials ({len(json_files)})"
-			f" {'[passwords shown]' if _show_passwords else ''}",
+			f"Saved credentials ({len(filtered)}/{len(json_files)})"
+			f" {'[passwords shown]' if _show_passwords else ''}"
+			f" {'[filter: ' + _filter + ']' if _filter else ''}",
 			Colours.HEADER,
 		)
-		for idx, f in enumerate(json_files):
+		if not filtered and _filter:
+			p_print(
+				f"  No accounts match '{_filter}'. Press [Esc] to clear filter.",
+				Colours.WARNING,
+			)
+		for idx, f in enumerate(filtered):
 			path = os.path.join(folder, f)
 			try:
 				with open(path, "r", encoding="utf-8") as fh:
@@ -918,7 +930,7 @@ def _action_view_credentials(config):
 			)
 		p_print(
 			"  [p] reveal  [c] copy email  [C] copy pw  [d] delete"
-			"  [n] notes  [t] tag  [q] back",
+			"  [n] notes  [t] tag  [/] search  [Esc] clear  [q] back",
 			Colours.WARNING,
 		)
 		key = input().strip().lower()
@@ -926,8 +938,16 @@ def _action_view_credentials(config):
 			break
 		elif key == "p":
 			_show_passwords = not _show_passwords
-		elif key == "n" and json_files:
-			target = json_files[_selected]
+		elif key == "/":
+			new_filter = prompt_text("Search (email/notes/tags)")
+			if new_filter:
+				_filter = new_filter
+				_selected = 0
+		elif key == "esc" or key == "\x1b" or key == chr(27):
+			_filter = ""
+			_selected = 0
+		elif key == "n" and filtered:
+			target = filtered[_selected]
 			path = os.path.join(folder, target)
 			try:
 				with open(path, "r", encoding="utf-8") as fh:
@@ -940,8 +960,8 @@ def _action_view_credentials(config):
 						json.dump(data, fh, indent=2)
 			except (OSError, json.JSONDecodeError) as e:
 				p_print(f"Failed to update notes: {e}", Colours.FAIL)
-		elif key == "t" and json_files:
-			target = json_files[_selected]
+		elif key == "t" and filtered:
+			target = filtered[_selected]
 			path = os.path.join(folder, target)
 			try:
 				with open(path, "r", encoding="utf-8") as fh:
@@ -956,21 +976,34 @@ def _action_view_credentials(config):
 						json.dump(data, fh, indent=2)
 			except (OSError, json.JSONDecodeError) as e:
 				p_print(f"Failed to update tags: {e}", Colours.FAIL)
-		elif key == "d" and json_files:
-			target = json_files[_selected]
+		elif key == "d" and filtered:
+			target = filtered[_selected]
 			if prompt_yes_no(f"Delete {target}? (cannot undo)"):
 				try:
 					os.remove(os.path.join(folder, target))
 					p_print(f"Deleted {target}", Colours.OKGREEN)
-					json_files.pop(_selected)
-					if _selected >= len(json_files):
-						_selected = max(0, len(json_files) - 1)
+					json_files.remove(target)
+					filtered.remove(target)
+					if _selected >= len(filtered):
+						_selected = max(0, len(filtered) - 1)
 				except OSError as e:
 					p_print(f"Delete failed: {e}", Colours.FAIL)
-		elif key in ("c",) and json_files:
+		elif key == "a" and filtered:
+			# Batch select all visible
+			for f in filtered:
+				path = os.path.join(folder, f)
+				try:
+					os.remove(path)
+					p_print(f"Deleted {f}", Colours.OKGREEN)
+				except OSError as e:
+					p_print(f"Delete failed: {f}: {e}", Colours.FAIL)
+			json_files = [f for f in json_files if f not in filtered]
+			filtered = []
+			_selected = 0
+		elif key in ("c", "C") and filtered:
 			if _HAS_CLIPBOARD:
 				try:
-					path = os.path.join(folder, json_files[_selected])
+					path = os.path.join(folder, filtered[_selected])
 					with open(path, "r", encoding="utf-8") as fh:
 						data = json.load(fh)
 					_pyperclip.copy(data.get("email", ""))
@@ -982,10 +1015,10 @@ def _action_view_credentials(config):
 					"pyperclip not installed. Run: pip install pyperclip",
 					Colours.WARNING,
 				)
-		elif key == "C" and json_files:
+		elif key == "C" and filtered:
 			if _HAS_CLIPBOARD:
 				try:
-					path = os.path.join(folder, json_files[_selected])
+					path = os.path.join(folder, filtered[_selected])
 					with open(path, "r", encoding="utf-8") as fh:
 						data = json.load(fh)
 					_pyperclip.copy(data.get("password", ""))
@@ -997,11 +1030,11 @@ def _action_view_credentials(config):
 					"pyperclip not installed. Run: pip install pyperclip",
 					Colours.WARNING,
 				)
-		elif key in ("j", "down") and json_files:
-			_selected = (_selected + 1) % len(json_files)
-		elif key in ("k", "up") and json_files:
-			_selected = (_selected - 1) % len(json_files)
-		if not json_files:
+		elif key in ("j", "down") and filtered:
+			_selected = (_selected + 1) % len(filtered)
+		elif key in ("k", "up") and filtered:
+			_selected = (_selected - 1) % len(filtered)
+		if not filtered:
 			p_print("No credentials remaining.", Colours.WARNING)
 			break
 
