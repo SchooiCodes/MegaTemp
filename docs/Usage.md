@@ -58,12 +58,19 @@ overwriting it.
 | `-f <file>`, `--file <file>` | Upload a file to the generated account. |
 | `-p`, `--public` | Public share link for the uploaded file (use with `-f`). |
 | `-l <n>`, `--loop <n>` | Loop `n` times; prints a summary. |
+| `-j <n>`, `--parallel <n>` | Concurrent workers for loop mode (default 1). |
 | `-e`, `--extract` | Compile all saved credentials into one file. |
 | `-ka`, `--keepalive` | Log into accounts to keep them alive. |
+| `--prune` | With `-ka`, delete credential files for failed accounts. |
 | `-v`, `--verbose` | Verbose logging. |
 | `-sh`, `--visible` | Run Chromium visibly. |
 | `-a <n>`, `--attempts <n>` | Max registration attempts (default 4). |
 | `-csv`, `--export-csv` | Also export to `credentials/accounts.csv`. |
+| `--export-jsonl` | Also export to `credentials/accounts.jsonl` (JSON Lines). |
+| `--proxy <url>` | Single proxy URL (e.g. `http://user:pass@host:8080`). |
+| `--proxy-file <path>` | File with one proxy URL per line (rotation). |
+| `--proxy-per-attempt` | Rotate proxy on every registration attempt. |
+| `--resume` | Resume an interrupted loop from last checkpoint. |
 
 ## Examples
 
@@ -71,8 +78,11 @@ overwriting it.
 python main.py -v                       # one account, verbose
 python main.py -sh                      # watch the browser
 python main.py -f song.mp3 -p           # upload + public link
-python main.py -ka -v                   # keep accounts alive (verbose shows storage)
+python main.py -ka -v --prune           # keep alive, auto-remove dead accounts
 python main.py -l 20 -a 8 --export-csv  # mass-generate with summary
+python main.py -l 50 -j 5               # parallel batch (5 concurrent workers)
+python main.py -l 50 -j 10 --proxy-file proxies.txt  # parallel + proxy rotation
+python main.py -l 20 --resume           # resume interrupted batch
 ```
 
 > [!WARNING]

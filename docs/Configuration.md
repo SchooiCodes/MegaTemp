@@ -5,15 +5,23 @@ copy).
 
 ```json
 {
+  "schemaVersion": 1,
   "executablePath": "/usr/bin/chromium",
-  "accountFormat": ""
+  "accountFormat": "",
+  "proxy": "",
+  "proxyFile": "",
+  "proxyPerAttempt": false,
+  "maxAttempts": 4,
+  "csvExport": false,
+  "visibleBrowser": false,
+  "emailProvider": "mailtm"
 }
 ```
 
 ## `executablePath`
 
 Absolute path to a Chromium-based browser executable. Leave empty to be
-prompted on first run.
+prompted on first run. Set via menu: *Settings → Edit Config*.
 
 ## `accountFormat`
 
@@ -29,14 +37,24 @@ Controls how credentials are saved. Supported placeholders:
   `credentials/`.
 - A custom string, e.g. `"{email}#{password}"`, writes that format instead.
 
+## `proxy` / `proxyFile` / `proxyPerAttempt`
+
+Set a single proxy URL or a file of proxies (one per line). When
+`proxyPerAttempt` is `true`, each registration attempt uses the next proxy
+from the rotation.
+
+## `maxAttempts`, `csvExport`, `visibleBrowser`
+
+These can be toggled from the TUI menu (*Settings*) and are now persisted to
+`config.json` across sessions.
+
 With `--export-csv`, every account is additionally appended to
 `credentials/accounts.csv` as `email,password,emailPassword`.
 
-## In-session settings (menu → Settings)
+With `--export-jsonl`, every account is appended to
+`credentials/accounts.jsonl` as a JSON Line.
 
-These are changed at runtime in the menu and are **not** persisted to
-`config.json`:
+## `schemaVersion`
 
-- **Max Attempts** — how many times registration retries with a fresh email.
-- **Visible Browser** — headless vs. visible Chromium.
-- **Auto CSV Export** — toggle CSV export on/off.
+Auto-managed. MegaTemp migrates older configs forward on read. Never edit
+this manually.

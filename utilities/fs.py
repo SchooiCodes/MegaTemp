@@ -164,6 +164,20 @@ def merge_config(overrides: dict, config: Config | None = None) -> Config:
 	return config
 
 
+def save_credentials_jsonl(credentials: Credentials) -> None:
+	"""Append credentials as a JSON Line to credentials/accounts.jsonl."""
+	if not os.path.exists("credentials"):
+		os.mkdir("credentials")
+	from dataclasses import asdict
+
+	path = "credentials/accounts.jsonl"
+	try:
+		with open(path, "a", encoding="utf-8") as f:
+			f.write(json.dumps(asdict(credentials)) + "\n")
+	except OSError as e:
+		p_print(f"Failed to write {path}: {e}", Colours.FAIL)
+
+
 def list_credentials() -> list[tuple[str, Credentials, float]]:
 	"""Return sorted list of (filename, Credentials, mtime) from credentials/."""
 	import glob

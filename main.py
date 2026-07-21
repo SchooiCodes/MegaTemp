@@ -9,6 +9,14 @@ import subprocess
 from typing import Tuple
 import pyppeteer
 
+# When available, import pyperclip for clipboard copy.
+try:
+	import pyperclip as _pyperclip
+
+	_HAS_CLIPBOARD = True
+except ImportError:
+	_HAS_CLIPBOARD = False
+
 # tenacity (a transitive dependency of mega.py) uses @asyncio.coroutine
 # in its _asyncio module, which was removed in Python 3.11. If we're
 # running on a Python where it's absent, restore it as a no-op shim so
@@ -30,6 +38,7 @@ from utilities.fs import (
 	write_default_config,
 	save_credentials,
 	save_credentials_csv,
+	save_credentials_jsonl,
 )
 from utilities.web import (
 	finish_form,
@@ -234,6 +243,12 @@ parser.add_argument(
 	required=False,
 	action="store_true",
 	help="Rotate proxy on every registration attempt (not just per batch).",
+)
+parser.add_argument(
+	"--export-jsonl",
+	required=False,
+	action="store_true",
+	help="Also export every saved account to credentials/accounts.jsonl (JSON Lines).",
 )
 parser.add_argument(
 	"--prune",
@@ -651,6 +666,8 @@ async def register(
 	save_credentials(credentials, config.accountFormat)
 	if export_csv:
 		save_credentials_csv(credentials)
+	if console_args.export_jsonl:
+		save_credentials_jsonl(credentials)
 
 	# Give delete_default up to 5s to finish in the background while we
 	# save credentials and (optionally) upload a file. If it takes longer
@@ -699,6 +716,7 @@ def _load_settings():
 		"attempts": cfg.maxAttempts if cfg else 4,
 		"visible": cfg.visibleBrowser if cfg else False,
 		"export_csv": cfg.csvExport if cfg else False,
+		"export_jsonl": False,
 	}
 
 
@@ -778,7 +796,10 @@ def _action_view_credentials(config):
 
 	Interactive key bindings:
 	  p  — toggle password reveal
+	  c  — copy email to clipboard (if pyperclip available)
+	  C  — copy password to clipboard
 	  d  — delete the selected credential (after confirmation)
+	  j/k or up/down — navigate
 	  q  — return to menu
 	"""
 	import json
@@ -826,7 +847,10 @@ def _action_view_credentials(config):
 				f" {marker} {email:<38} pw:{pw_display:<14} {size}B",
 				Colours.OKGREEN if idx == _selected else Colours.OKCYAN,
 			)
-		p_print("  [p] reveal  [d] delete  [q] back", Colours.WARNING)
+		p_print(
+			"  [p] reveal  [c] copy email  [C] copy pw  [d] delete  [q] back",
+			Colours.WARNING,
+		)
 		key = input().strip().lower()
 		if key == "q":
 			break
@@ -843,6 +867,36 @@ def _action_view_credentials(config):
 						_selected = max(0, len(json_files) - 1)
 				except OSError as e:
 					p_print(f"Delete failed: {e}", Colours.FAIL)
+		elif key in ("c",) and json_files:
+			if _HAS_CLIPBOARD:
+				try:
+					path = os.path.join(folder, json_files[_selected])
+					with open(path, "r", encoding="utf-8") as fh:
+						data = json.load(fh)
+					_pyperclip.copy(data.get("email", ""))
+					p_print("Email copied to clipboard!", Colours.OKGREEN)
+				except Exception as e:
+					p_print(f"Clipboard error: {e}", Colours.FAIL)
+			else:
+				p_print(
+					"pyperclip not installed. Run: pip install pyperclip",
+					Colours.WARNING,
+				)
+		elif key == "C" and json_files:
+			if _HAS_CLIPBOARD:
+				try:
+					path = os.path.join(folder, json_files[_selected])
+					with open(path, "r", encoding="utf-8") as fh:
+						data = json.load(fh)
+					_pyperclip.copy(data.get("password", ""))
+					p_print("Password copied to clipboard!", Colours.OKGREEN)
+				except Exception as e:
+					p_print(f"Clipboard error: {e}", Colours.FAIL)
+			else:
+				p_print(
+					"pyperclip not installed. Run: pip install pyperclip",
+					Colours.WARNING,
+				)
 		elif key in ("j", "down") and json_files:
 			_selected = (_selected + 1) % len(json_files)
 		elif key in ("k", "up") and json_files:
@@ -860,6 +914,33 @@ def _action_export(config):
 		return
 	p_print("Exporting credentials ...", Colours.HEADER)
 	extract_credentials(config.accountFormat)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_storage(config):
+	"""Show storage quota for all saved accounts."""
+	from utilities.fs import list_credentials
+
+	creds_list = list_credentials()
+	if not creds_list:
+		p_print("No saved credentials.", Colours.WARNING)
+		pause()
+		return
+
+	from mega import Mega
+
+	p_print("Querying storage for each account...", Colours.HEADER)
+	for _fname, creds, _mtime in creds_list:
+		try:
+			mega = Mega()
+			mega.login(creds.email, creds.password)
+			quota = mega.get_quota() / (1024**3)
+			p_print(
+				f"  {creds.email:<40} {quota:.2f} GB free",
+				Colours.OKGREEN,
+			)
+		except Exception as e:
+			p_print(f"  {creds.email:<40} Error: {e}", Colours.FAIL)
 	pause("Press Enter to return to the menu...")
 
 
@@ -994,6 +1075,12 @@ def _build_settings_menu():
 			value=lambda: "Yes" if _SETTINGS["export_csv"] else "No",
 		),
 		MenuItem(
+			"Auto JSONL Export",
+			lambda: _toggle("export_jsonl"),
+			"Also write each account to accounts.jsonl",
+			value=lambda: "Yes" if _SETTINGS["export_jsonl"] else "No",
+		),
+		MenuItem(
 			"Edit Config",
 			lambda: _action_edit_config("", None),
 			"executablePath, accountFormat, proxy",
@@ -1049,6 +1136,11 @@ def _run_tui(executable_path, config):
 				"Keep Alive Accounts",
 				lambda: _action_keepalive(config),
 				"Log in to every account to keep it active",
+			),
+			MenuItem(
+				"Storage Info",
+				lambda: _action_storage(config),
+				"Show free quota for every saved account",
 			),
 			MenuItem(
 				"Upload File",

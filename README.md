@@ -38,13 +38,18 @@ python main.py
 |---------|-----|
 | **Single account** | `python main.py` — opens the interactive TUI menu |
 | **Mass generation** | Menu → *Loop Create*, or `python main.py -l 10` |
+| **Parallel mode** | `python main.py -l 50 -j 5` (5 concurrent workers) |
+| **Proxy rotation** | `python main.py -l 20 --proxy-file proxies.txt` |
+| **Resume batches** | `python main.py -l 20 --resume` (recover interrupted runs) |
 | **File upload** | `python main.py -f photo.jpg -p` (uploads + public link) |
-| **Keep accounts alive** | `python main.py -ka` (logs into every saved account) |
+| **Keep accounts alive** | `python main.py -ka --prune` (logs in, removes dead accounts) |
 | **Export credentials** | Menu → *Export Credentials*, or `python main.py -e` |
 | **Disposable email** | [mail.tm](https://mail.tm) inboxes — no real email needed |
 | **Headless browser** | Pyppeteer + Chromium (watch it with `-sh`) |
 | **Custom format** | `config.json` → `accountFormat: "{email}#{password}"` |
+| **Config editor** | Menu → *Settings → Edit Config* |
 | **Prebuilt binaries** | [Releases](https://github.com/SchooiCodes/MegaTemp/releases) — no Python required |
+| **Auto-update** | Frozen EXE checks for new releases on startup |
 
 ---
 
