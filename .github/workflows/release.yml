@@ -39,6 +39,7 @@ jobs:
               --exclude='__pycache__' --exclude='*.pyc' \
               --exclude='.ruff_cache' --exclude='.mypy_cache' \
               --exclude='.idea' \
+              --exclude='dist' \
               -czf "dist/MegaTemp-${GITHUB_REF_NAME}-src.tar.gz" .
       - name: Upload to release
         env:
