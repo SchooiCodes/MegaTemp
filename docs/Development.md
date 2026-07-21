@@ -9,17 +9,25 @@ MegaTemp/
 ├── requirements.txt
 ├── pyproject.toml          # Ruff / mypy config
 ├── MegaTemp.spec           # PyInstaller spec
-├── _test_full_e2e.py       # 52-test comprehensive test suite
+├── Dockerfile              # Container build
+├── docker-compose.yml      # Docker Compose with persistent volumes
+├── _test_full_e2e.py       # 97-test comprehensive test suite
 ├── services/
 │   ├── alive.py            # Keepalive service
-│   ├── upload.py           # File upload + public link
+│   ├── upload.py           # File upload + public link + progress bar
+│   ├── download.py         # Cloud file listing + download
 │   └── extract.py          # Credential export
 ├── utilities/
 │   ├── web.py              # Browser automation (register / confirm / mail)
-│   ├── etc.py              # Helpers (credentials, printing, updates, status line)
-│   ├── menu.py             # Zero-dependency terminal menu engine
-│   ├── fs.py               # Config + credential file I/O
-│   └── models.py           # Data types (Colours, Credentials, Config)
+│   ├── etc.py              # Helpers (colours, notify, ProxyManager, VERSION)
+│   ├── menu.py             # Zero-dependency terminal menu engine + path completion
+│   ├── fs.py               # Config + credential file I/O + config validation
+│   ├── models.py           # Data types (Credentials with notes/tags, Config)
+│   ├── provider.py         # EmailProvider ABC + registry
+│   ├── mailtm_provider.py  # mail.tm EmailProvider implementation
+│   ├── guerrilla.py        # Guerrilla Mail EmailProvider implementation
+│   ├── retry.py            # @retry decorator (tenacity / pure-Python fallback)
+│   └── password_strength.py# Entropy-based password strength estimation
 ├── docs/                   # Documentation
 └── .github/                # CI + community health files
     └── workflows/
@@ -54,16 +62,17 @@ pip install pytest pytest-asyncio
 pytest _test_full_e2e.py -v
 ```
 
-The test suite covers all modules (52 tests): models, fs, etc, web, menu,
-extract, upload, and main. Tests use `tmp_path` isolation and `capsys` for
-stdout capture.
+The test suite covers all modules (97 tests): models, fs, etc, menu,
+extract, upload, download, retry, password_strength, provider, notify, and CLI
+dispatch. Tests use `tmp_path` isolation, `capsys` for stdout capture, and
+`monkeypatch` for input mocking.
 
-A GitHub Actions workflow is planned to run tests on every push.
+A GitHub Actions workflow runs tests on every push.
 
 ## How registration works
 
-1. `generate_mail()` creates a mail.tm inbox (unique random address, jittered
-   backoff, cached domain list).
+1. `generate_mail()` creates a disposable inbox (mail.tm or Guerrilla Mail,
+   selected via `--provider` or `config.emailProvider`).
 2. `type_name()` / `type_password()` fill the MEGA sign-up form using
    `_robust_type()` (focus, prime, clear, type with delay, verify).
 3. `finish_form()` submits and `mail_login()` + `get_mail()` fetch the
@@ -72,12 +81,26 @@ A GitHub Actions workflow is planned to run tests on every push.
    account to be created. On failure it raises so the run retries with a fresh
    email.
 
+### Provider system
+
+Email providers implement the `EmailProvider` ABC in `utilities/provider.py`:
+
+- **MailTmProvider** (`utilities/mailtm_provider.py`) — wraps the
+  `pymailtm` library for mail.tm inboxes.
+- **GuerrillaMailProvider** (`utilities/guerrilla.py`) — uses the Guerrilla
+  Mail REST API directly (no signup, no API key).
+
+Providers auto-register on import via `register_provider()` at the bottom of
+`utilities/provider.py`. New providers need only an `EmailProvider` subclass
+and a `register_provider(name, cls)` call.
+
 ### Browser lifecycle
 
 - **Single account**: a browser is launched per call to `register()`, closed
   when done.
 - **Loop mode**: the browser is launched once and shared across all iterations
   via the `_browser` parameter (saves ~8s per account).
+- **Parallel mode**: each worker launches its own browser.
 
 ## Building the executable
 
@@ -101,7 +124,7 @@ a tag is pushed (`v*`).
 Push a version tag to trigger an automated release:
 
 ```bash
-git tag v1.2.0
+git tag v1.3.0
 git push --tags
 ```
 
@@ -111,6 +134,17 @@ notes, and attaches:
 - `MegaTemp-windows.exe` (Windows executable)
 - `MegaTemp-macos` (macOS executable)
 - `MegaTemp-{version}-src.tar.gz` (source tarball)
+
+To update an existing tag to the current HEAD:
+
+```bash
+git tag -f v1.3.0 HEAD
+git push origin v1.3.0 --force
+```
+
+> [!WARNING]
+> Force-pushing a tag triggers the release workflow again, which builds new
+> binaries and creates a new release with the same tag.
 
 ## Contributing
 
