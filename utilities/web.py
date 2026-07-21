@@ -359,12 +359,10 @@ async def generate_mail() -> Credentials:
 	last_error = None
 	for attempt in range(1, max_retries + 1):
 		try:
-			address = _unique_mail_address(domains)
+			address = _unique_mail_address(_mailtm_domains)
 			password = get_random_string(10)
 			response = mail._make_account_request("accounts", address, password)
-			account = pymailtm.Account(
-				response["id"], response["address"], password
-			)
+			account = pymailtm.Account(response["id"], response["address"], password)
 			mail._save_account(account)
 			break
 		except CouldNotGetAccountException as e:

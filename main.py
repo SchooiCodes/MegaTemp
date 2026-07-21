@@ -229,29 +229,56 @@ def loop_registrations(
 	max_attempts: int = 4,
 	export_csv: bool = False,
 ):
-	"""Registers accounts in a loop, printing a summary at the end."""
+	"""Registers accounts in a loop, printing a summary at the end.
+
+	Launching Chromium takes ~8 s, so we launch *one* browser and share it
+	across all loop iterations instead of re-launching per-account.
+	"""
 	separator("Loop mode", Colours.HEADER)
 	successes, failures = 0, 0
 	start = time.monotonic()
-	for i in range(loop_count):
-		p_print(f"Loop {i + 1}/{loop_count}", Colours.OKGREEN)
-		clear_tmp()
+
+	async def _run_all():
+		nonlocal successes, failures
+		p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
+		browser = await pyppeteer.launch(
+			{
+				"headless": not visible,
+				"ignoreHTTPSErrors": True,
+				"userDataDir": f"{os.getcwd()}/tmp",
+				"args": args,
+				"executablePath": executable_path,
+				"autoClose": False,
+				"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
+			}
+		)
 		try:
-			asyncio.run(
-				register(
-					None,
-					executable_path,
-					config,
-					visible=visible,
-					max_attempts=max_attempts,
-					export_csv=export_csv,
-				)
-			)
-			successes += 1
-		except SystemExit:
-			# register() calls sys.exit(0) on success; a non-zero exit means
-			# it gave up after exhausting its attempts.
-			failures += 1
+			for i in range(loop_count):
+				p_print(f"Loop {i + 1}/{loop_count}", Colours.OKGREEN)
+				clear_tmp()
+				try:
+					await register(
+						None,
+						executable_path,
+						config,
+						visible=visible,
+						max_attempts=max_attempts,
+						export_csv=export_csv,
+						_browser=browser,
+					)
+					successes += 1
+				except SystemExit as e:
+					if e.code is None or e.code == 0:
+						successes += 1
+					else:
+						failures += 1
+		finally:
+			try:
+				await browser.close()
+			except Exception:
+				pass
+
+	asyncio.run(_run_all())
 
 	total = elapsed(start)
 	separator("Loop summary", Colours.HEADER)
@@ -275,12 +302,16 @@ async def register(
 	visible: bool = False,
 	max_attempts: int = 4,
 	export_csv: bool = False,
+	_browser=None,  # internal: reuse across loop iterations
 ):
 	"""Registers and verifies a mega.nz account.
 
 	MEGA's confirmation email is sometimes delayed or not delivered by the
 	mail provider. To stay robust we retry the whole registration (with a
 	fresh email address) a few times before giving up.
+
+	When called from loop mode, pass a shared ``_browser`` so Chromium is
+	launched once instead of per-iteration.
 	"""
 	message = None
 	start = time.monotonic()
@@ -288,18 +319,21 @@ async def register(
 	# Silence benign pyppeteer teardown warnings emitted during browser close.
 	asyncio.get_running_loop().set_exception_handler(_quiet_async_exceptions)
 
-	p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
-	browser = await pyppeteer.launch(
-		{
-			"headless": not visible,
-			"ignoreHTTPSErrors": True,
-			"userDataDir": f"{os.getcwd()}/tmp",
-			"args": args,
-			"executablePath": executable_path,
-			"autoClose": False,  # We run into runtime errors if we use autoClose
-			"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
-		}
-	)
+	own_browser = _browser is None
+	browser = _browser
+	if browser is None:
+		p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
+		browser = await pyppeteer.launch(
+			{
+				"headless": not visible,
+				"ignoreHTTPSErrors": True,
+				"userDataDir": f"{os.getcwd()}/tmp",
+				"args": args,
+				"executablePath": executable_path,
+				"autoClose": False,  # We run into runtime errors if we use autoClose
+				"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
+			}
+		)
 
 	context = await browser.createIncognitoBrowserContext()
 
@@ -357,11 +391,17 @@ async def register(
 					except Exception:
 						pass
 	finally:
-		# Always release the browser, even if we gave up or crashed mid-flow.
+		# Release the incognito context (always).
 		try:
-			await browser.close()
+			await context.close()
 		except Exception:
 			pass
+		# Only close the browser when we own it (single-account mode).
+		if own_browser:
+			try:
+				await browser.close()
+			except Exception:
+				pass
 
 	if message is None:
 		p_print(
@@ -502,6 +542,10 @@ def _action_view_credentials(config):
 
 def _action_export(config):
 	"""Export saved credentials to a flat file."""
+	if os.path.exists("credentials.txt") and not prompt_yes_no(
+		"credentials.txt already exists. Overwrite?"
+	):
+		return
 	p_print("Exporting credentials ...", Colours.HEADER)
 	extract_credentials(config.accountFormat)
 	pause("Press Enter to return to the menu...")
@@ -516,11 +560,13 @@ def _action_keepalive(config):
 
 def _action_upload(_unused_executable_path, config):
 	"""Prompt for a file and (optional) public link, then upload."""
-	path = prompt_text("Path to file to upload")
-	if not path or not os.path.exists(path):
+	while True:
+		path = os.path.expanduser(prompt_text("Path to file to upload"))
+		if path and os.path.exists(path):
+			break
 		p_print("File not found.", Colours.FAIL)
-		pause()
-		return
+		if not prompt_yes_no("Try a different path?"):
+			return
 	public = prompt_yes_no("Generate a public share link?")
 	# Upload needs an account; reuse the most recently created credential.
 	import glob
@@ -618,7 +664,13 @@ def _run_tui(executable_path, config):
 				lambda: _open_settings(),
 				"Attempts, visible mode, CSV export",
 			),
-			MenuItem("Exit", lambda: _BACK, "Quit MegaTemp"),
+			MenuItem(
+				"Exit",
+				lambda: (
+					_BACK if prompt_yes_no("Are you sure you want to exit?") else None
+				),
+				"Quit MegaTemp",
+			),
 		]
 		menu = Menu(f"MegaTemp {VERSION}", items)
 		result = menu.run()

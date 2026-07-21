@@ -13,7 +13,6 @@ from utilities.models import Colours, Credentials
 
 VERSION = "v1.1.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
-mega = Mega()
 
 
 def clear_tmp() -> bool:
@@ -87,6 +86,7 @@ def delete_default(credentials: Credentials):
 	The default account has no welcome file (or the mega.py library call
 	fails), so guard every step and treat "nothing to delete" as success.
 	"""
+	mega = Mega()
 	try:
 		mega.login(credentials.email, credentials.password)
 	except Exception:
@@ -110,7 +110,10 @@ def reinstall_tenacity():
 			pip = "pip"
 		ret = os.system(f"{pip} uninstall tenacity -y")
 		if ret != 0:
-			p_print("Failed to uninstall old tenacity, continuing anyway...", Colours.WARNING)
+			p_print(
+				"Failed to uninstall old tenacity, continuing anyway...",
+				Colours.WARNING,
+			)
 		ret = os.system(f"{pip} install tenacity")
 		if ret != 0:
 			p_print("Failed to install tenacity.", Colours.FAIL)

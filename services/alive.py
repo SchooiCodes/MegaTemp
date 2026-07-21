@@ -8,8 +8,6 @@ from mega.errors import RequestError
 
 from utilities.etc import p_print, Colours
 
-mega = Mega()
-
 
 def keepalive(verbose: bool):
 	"""Keep the generated accounts alive by logging in."""
@@ -30,6 +28,7 @@ def keepalive(verbose: bool):
 		return
 
 	p_print(f"Checking {len(files)} saved account(s)...", Colours.OKCYAN)
+	mega = Mega()
 	i = 0
 	for file in files:
 		path = f"./credentials/{file}"
