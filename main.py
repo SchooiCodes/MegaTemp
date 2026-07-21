@@ -568,6 +568,7 @@ async def register(
 	"""
 	message = None
 	start = time.monotonic()
+	provider_name = getattr(config, "emailProvider", "mailtm") or "mailtm"
 
 	# Silence benign pyppeteer teardown warnings emitted during browser close.
 	asyncio.get_running_loop().set_exception_handler(_quiet_async_exceptions)
@@ -576,7 +577,9 @@ async def register(
 	browser = _browser
 
 	# Generate the first email address while the browser launches (parallelism).
-	first_mail_task = asyncio.create_task(generate_mail()) if browser is None else None
+	first_mail_task = (
+		asyncio.create_task(generate_mail(provider_name)) if browser is None else None
+	)
 
 	if browser is None:
 		p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
@@ -602,18 +605,18 @@ async def register(
 				if attempt == 1 and first_mail_task is not None:
 					credentials = await first_mail_task
 				else:
-					credentials = await generate_mail()
+					credentials = await generate_mail(provider_name)
 				page = await context.newPage()
 				await type_name(page, credentials)
 				await type_password(page, credentials)
 				await finish_form(page, credentials)
 
-				mail = await mail_login(credentials)
+				mail = await mail_login(credentials, provider_name)
 				# No initial delay — start polling immediately;
 				# get_mail handles backoff internally.
 				try:
 					message = await get_mail(mail)
-				except CouldNotGetMessagesException:
+				except (CouldNotGetMessagesException, LookupError):
 					p_print(
 						f"Confirmation email not received (attempt {attempt}/{max_attempts}). "
 						"Retrying with a new email address...",

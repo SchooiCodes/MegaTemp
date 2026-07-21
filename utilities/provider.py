@@ -1,9 +1,10 @@
 """Email provider abstraction layer.
 
 Defines the base interface that all disposable-email providers must
-implement. Currently only ``mailtm`` is supported, but the protocol
-enables adding new backends (Guerrilla Mail, Temp Mail, etc.) without
-modifying browser-automation code.
+implement. Currently supported backends: ``mailtm`` (default) and
+``guerrillamail`` (no signup required). Adding new providers requires
+only a class implementing ``EmailProvider`` and registering it in
+``_PROVIDERS``.
 """
 
 from abc import ABC, abstractmethod
@@ -43,3 +44,35 @@ class EmailProvider(ABC):
 	def name(self) -> str:
 		"""Human-readable provider name (e.g. 'mail.tm')."""
 		...
+
+
+# ---------------------------------------------------------------------------
+# Provider registry — add new providers here
+# ---------------------------------------------------------------------------
+_PROVIDERS: dict[str, type[EmailProvider]] = {}
+
+
+def register_provider(name: str, cls: type[EmailProvider]) -> None:
+	"""Register an email provider class under a short name."""
+	_PROVIDERS[name] = cls
+
+
+def get_provider(name: str) -> EmailProvider | None:
+	"""Return an instance of the named provider, or None if unknown."""
+	cls = _PROVIDERS.get(name)
+	if cls is None:
+		return None
+	return cls()
+
+
+def get_provider_names() -> list[str]:
+	"""Return sorted list of registered provider names."""
+	return sorted(_PROVIDERS.keys())
+
+
+# ---------------------------------------------------------------------------
+# Auto-register built-in providers on import.
+# Importing these modules triggers their register_provider() calls.
+# ---------------------------------------------------------------------------
+import utilities.mailtm_provider  # noqa: F401, E402
+import utilities.guerrilla  # noqa: F401, E402

@@ -8,7 +8,7 @@ import html
 import pymailtm
 from faker import Faker
 
-from pymailtm.pymailtm import CouldNotGetAccountException, CouldNotGetMessagesException
+from pymailtm.pymailtm import CouldNotGetAccountException
 import pyppeteer
 import pyppeteer.page
 
@@ -223,15 +223,21 @@ async def initial_setup(context, message, credentials):
 			pass
 
 
-async def mail_login(credentials: Credentials):
-	"""Logs into the mail.tm account with the generated credentials.
+async def mail_login(credentials: Credentials, provider_name: str = "mailtm"):
+	"""Log into the email account and return a mailbox object.
 
-	Retries a bounded number of times (with backoff) on transient failures
-	instead of looping forever. If a mail.tm account with unread messages
-	was cached from a previous attempt, it reuses that to avoid burning a
-	fresh disposable inbox on every retry.
+	For mail.tm (default): retries with backoff and caches the session
+	across retries.  Other providers route through the EmailProvider ABC.
 	"""
 	global _last_mail_account, _last_mail_password
+
+	if provider_name != "mailtm":
+		from utilities.provider import get_provider
+
+		prov = get_provider(provider_name)
+		if prov is not None:
+			return await prov.login(credentials)
+		raise ValueError(f"Unknown email provider: {provider_name}")
 
 	if _last_mail_account is not None:
 		_log("[mail] reusing cached mail.tm account across retries.", Colours.OKCYAN)
@@ -261,10 +267,32 @@ async def mail_login(credentials: Credentials):
 
 
 async def get_mail(mail, max_attempts: int = 120):
-	"""Get the latest email from the mail.tm account.
+	"""Get the latest email from the mailbox.
+
+	For mail.tm mailboxes (pymailtm Account objects), uses the existing
+	polling loop.  For other providers (Mailbox objects from the ABC),
+	delegates to the provider's get_message and retries on LookupError.
 
 	max_attempts * 1.0s sleep ≈ 2min of polling before giving up.
 	"""
+	# If the mailbox has a provider attribute, it's from the ABC.
+	if hasattr(mail, "provider"):
+		_step("[mail] polling for confirmation email ...", Colours.HEADER)
+		from utilities.provider import get_provider
+
+		prov = get_provider(mail.provider)
+		if prov is not None:
+			for _attempt in range(1, max_attempts + 1):
+				try:
+					return await prov.get_message(mail)
+				except LookupError:
+					await asyncio.sleep(1.0)
+			raise LookupError("Confirmation email not received after polling.")
+		raise ValueError(f"Unknown provider: {mail.provider}")
+
+	# --- mail.tm specific ---
+	from pymailtm.pymailtm import CouldNotGetMessagesException
+
 	_step("[mail] polling for MEGA's confirmation email ...", Colours.HEADER)
 	for attempt in range(1, max_attempts + 1):
 		try:
@@ -353,17 +381,27 @@ _last_mail_account: pymailtm.Account | None = None
 _last_mail_password: str = ""
 
 
-async def generate_mail() -> Credentials:
-	"""Generate mail.tm account and return account credentials.
+async def generate_mail(provider_name: str = "mailtm") -> Credentials:
+	"""Generate a disposable inbox and return credentials.
 
-	mail.tm's API uses random usernames which often collide with existing
-	accounts (HTTP 422 "already used"). To avoid excessive retries we
-	generate unique addresses ourselves by appending high-entropy random
-	suffixes, and we reuse the MailTm client between attempts so the
-	domain list is fetched only once.
+	Provider is selected by ``provider_name`` (default ``mailtm``).
+	When using mail.tm, unique addresses with high-entropy suffixes are
+	used to avoid HTTP 422 collisions.
 	"""
 	global _mailtm_domains, _last_mail_account, _last_mail_password
-	# Reset session cache since we are generating a brand new email.
+
+	# Route non-mail.tm providers through the EmailProvider ABC.
+	if provider_name != "mailtm":
+		_last_mail_account = None
+		_last_mail_password = ""
+		from utilities.provider import get_provider
+
+		prov = get_provider(provider_name)
+		if prov is not None:
+			return await prov.create_account()
+		raise ValueError(f"Unknown email provider: {provider_name}")
+
+	# --- mail.tm specific ---
 	_last_mail_account = None
 	_last_mail_password = ""
 
