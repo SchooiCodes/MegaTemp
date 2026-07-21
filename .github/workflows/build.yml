@@ -36,6 +36,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+          # mega.py depends on the obsolete pathlib backport
+          # (<https://pypi.org/project/pathlib/>) which conflicts with
+          # PyInstaller on Python 3.12+. Remove it since the stdlib
+          # pathlib (available since 3.4) is always available.
+          pip uninstall pathlib -y 2>/dev/null || true
       - name: Build
         run: pyinstaller MegaTemp.spec --noconfirm --clean
       - name: Upload artifact
