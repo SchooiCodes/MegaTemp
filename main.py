@@ -1047,7 +1047,43 @@ def _action_edit_config(_unused_executable_path, config):
 	pause("Press Enter to return to the menu...")
 
 
+def _pick_credentials() -> Credentials | None:
+	"""Show a numbered list of saved accounts and let the user pick one."""
+	from utilities.fs import list_credentials
+
+	creds_list = list_credentials()
+	if not creds_list:
+		p_print("No saved credentials.", Colours.WARNING)
+		return None
+	separator("Select account", Colours.HEADER)
+	for idx, (_fname, creds, _) in enumerate(creds_list, start=1):
+		p_print(f"  {idx}. {creds.email}", Colours.OKCYAN)
+	choice = prompt_int("Account number", 1, 1, len(creds_list))
+	return creds_list[choice - 1][1]
+
+
 def _action_upload_dir(_unused_executable_path, config):
+	"""Prompt for a directory, then upload all files inside (non-recursive)."""
+	import glob
+
+	path = os.path.expanduser(prompt_text("Path to directory to upload"))
+	if not os.path.isdir(path):
+		p_print(f"Directory not found: {path}", Colours.FAIL)
+		pause()
+		return
+	files = sorted(f for f in glob.glob(os.path.join(path, "*")) if os.path.isfile(f))
+	if not files:
+		p_print(f"No files found in {path}", Colours.WARNING)
+		pause()
+		return
+	public = prompt_yes_no("Generate public share links?")
+	p_print(f"Uploading {len(files)} file(s) from {path}...", Colours.HEADER)
+	creds = _pick_credentials()
+	if creds is None:
+		return
+	for f in files:
+		upload_file(public, f, creds)
+	pause("Press Enter to return to the menu...")
 	"""Prompt for a directory, then upload all files inside (non-recursive)."""
 	import glob
 
@@ -1092,22 +1128,9 @@ def _action_upload(_unused_executable_path, config):
 		if not prompt_yes_no("Try a different path?"):
 			return
 	public = prompt_yes_no("Generate a public share link?")
-	# Upload needs an account; reuse the most recently created credential.
-	import glob
-	import json
-
-	jsons = sorted(
-		glob.glob("./credentials/*.json"), key=os.path.getmtime, reverse=True
-	)
-	if not jsons:
-		p_print("No saved credentials to upload with.", Colours.FAIL)
-		pause()
+	creds = _pick_credentials()
+	if creds is None:
 		return
-	with open(jsons[0], "r", encoding="utf-8") as fh:
-		data = json.load(fh)
-	creds = Credentials(
-		data.get("email", ""), data.get("emailPassword", ""), data.get("password", "")
-	)
 	upload_file(public, path, creds)
 	pause("Press Enter to return to the menu...")
 
