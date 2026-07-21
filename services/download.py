@@ -5,7 +5,7 @@ import os
 from mega import Mega
 
 from utilities.etc import Credentials, p_print, Colours, separator
-from utilities.menu import prompt_int, prompt_text, pause
+from utilities.menu import prompt_int, prompt_path, pause
 from utilities.retry import retry
 
 
@@ -94,7 +94,7 @@ def _action_browse_cloud(_executable_path, _config):
 	if choice == 0:
 		return
 	selected = files[choice - 1]
-	dest = prompt_text("Download directory", default=".")
+	dest = prompt_path("Download directory", default=".", must_exist=True)
 	dest = os.path.expanduser(dest)
 	if not os.path.isdir(dest):
 		p_print(f"Directory not found: {dest}", Colours.FAIL)
