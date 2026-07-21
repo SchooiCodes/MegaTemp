@@ -992,6 +992,41 @@ class TestMainCLI:
 		)
 		assert "Traceback" not in result.stderr
 
+	def test_main_version_flag(self):
+		import subprocess
+
+		result = subprocess.run(
+			[sys.executable, "main.py", "--version"],
+			capture_output=True,
+			text=True,
+			timeout=10,
+		)
+		assert "v1.3.0" in result.stdout
+
+	def test_main_provider_validation_valid(self):
+		import subprocess
+
+		result = subprocess.run(
+			[sys.executable, "main.py", "--provider", "mailtm", "--version"],
+			capture_output=True,
+			text=True,
+			timeout=10,
+		)
+		assert result.returncode == 0
+		assert "v1.3.0" in result.stdout
+
+	def test_main_provider_validation_invalid(self):
+		import subprocess
+
+		result = subprocess.run(
+			[sys.executable, "main.py", "--provider", "doesnotexist"],
+			capture_output=True,
+			text=True,
+			timeout=10,
+		)
+		assert result.returncode != 0
+		assert "Unknown provider" in result.stdout  # p_print goes to stdout
+
 
 if __name__ == "__main__":
 	pytest.main([__file__, "-v", "--tb=short"])

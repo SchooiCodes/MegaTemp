@@ -322,6 +322,18 @@ parser.add_argument(
 
 console_args = parser.parse_args()
 
+# Validate --provider value early.
+if console_args.provider is not None:
+	from utilities.provider import get_provider, get_provider_names
+
+	if get_provider(console_args.provider) is None:
+		p_print(
+			f"Unknown provider: '{console_args.provider}'. "
+			f"Valid options: {get_provider_names() or 'none'}",
+			Colours.FAIL,
+		)
+		sys.exit(1)
+
 
 def setup() -> Tuple[str, Config]:
 	"""Sets up the configs so everything runs smoothly."""
