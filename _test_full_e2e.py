@@ -309,13 +309,13 @@ class TestEtc:
 		assert Colours.WARNING in captured.out
 		clear_status_line()
 
-	def test_check_for_updates_offline(self):
-		"""Should not crash when offline."""
-		from utilities.etc import check_for_updates
+	def test_auto_update_source(self):
+		"""auto_update() should no-op in non-frozen (source) mode."""
+		from utilities.etc import auto_update
 
-		result = check_for_updates()
-		# Should return False (no update found) or True silently
-		assert result is False or result is True
+		# In source mode (not frozen EXE) it should return immediately.
+		result = auto_update()
+		assert result is None  # no return value = no crash
 
 	def test_version_defined(self):
 		from utilities.etc import VERSION

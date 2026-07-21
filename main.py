@@ -45,7 +45,7 @@ from utilities.etc import (
 	p_print,
 	Colours,
 	clear_tmp,
-	check_for_updates,
+	auto_update,
 	delete_default,
 	separator,
 	elapsed,
@@ -114,6 +114,10 @@ args = [
 	"--disable-setuid-sandbox",
 	"--disable-gpu",
 	"--disable-dev-shm-usage",
+	"--no-first-run",
+	"--disable-background-networking",
+	"--disable-sync",
+	"--disable-background-timer-throttling",
 	"--disable-infobars",
 	"--window-position=0,0",
 	"--ignore-certificate-errors",
@@ -264,7 +268,9 @@ def loop_registrations(
 		try:
 			for i in range(loop_count):
 				p_print(f"Loop {i + 1}/{loop_count}", Colours.OKGREEN)
-				clear_tmp()
+				# clear_tmp deliberately skipped here: the browser's user-data-dir
+				# is tmp/, and clearing it would wipe the shared browser profile.
+				# It was already cleaned once before launching the browser.
 				try:
 					await register(
 						None,
@@ -330,6 +336,10 @@ async def register(
 
 	own_browser = _browser is None
 	browser = _browser
+
+	# Generate the first email address while the browser launches (parallelism).
+	first_mail_task = asyncio.create_task(generate_mail()) if browser is None else None
+
 	if browser is None:
 		p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
 		browser = await pyppeteer.launch(
@@ -351,14 +361,18 @@ async def register(
 			separator(f"Registration attempt {attempt}/{max_attempts}")
 			page = None
 			try:
-				credentials = await generate_mail()
+				if attempt == 1 and first_mail_task is not None:
+					credentials = await first_mail_task
+				else:
+					credentials = await generate_mail()
 				page = await context.newPage()
 				await type_name(page, credentials)
 				await type_password(page, credentials)
 				await finish_form(page, credentials)
 
 				mail = await mail_login(credentials)
-				await asyncio.sleep(1.5)
+				# No initial delay — start polling immediately;
+				# get_mail handles backoff internally.
 				try:
 					message = await get_mail(mail)
 				except CouldNotGetMessagesException:
@@ -433,17 +447,27 @@ async def register(
 		Colours.OKCYAN,
 	)
 
+	# Fire-and-forget delete_default in a background thread so the
+	# MEGA API call (~3-5s) does not block the main flow.
+	_delete_task = asyncio.create_task(asyncio.to_thread(delete_default, credentials))
+
+	p_print("Saving credentials ...", Colours.HEADER)
+	save_credentials(credentials, config.accountFormat)
+	if export_csv:
+		save_credentials_csv(credentials)
+
+	# Give delete_default up to 5s to finish in the background while we
+	# save credentials and (optionally) upload a file. If it takes longer
+	# we move on — it's best-effort cleanup.
 	try:
-		delete_default(credentials)
+		await asyncio.wait_for(_delete_task, timeout=5.0)
+	except asyncio.TimeoutError:
+		pass
 	except Exception as e:
 		p_print(
 			f"Warning: could not remove the default welcome file: {e}",
 			Colours.WARNING,
 		)
-	p_print("Saving credentials ...", Colours.HEADER)
-	save_credentials(credentials, config.accountFormat)
-	if export_csv:
-		save_credentials_csv(credentials)
 
 	if console_args.file is not None:
 		try:
@@ -698,7 +722,7 @@ def _open_settings():
 
 if __name__ == "__main__":
 	set_verbose(console_args.verbose)
-	check_for_updates()
+	auto_update()
 
 	executable_path, config = setup()
 	if not executable_path:

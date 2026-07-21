@@ -55,16 +55,16 @@ async def _robust_type(page, selector: str, text: str):
 	"""
 	await page.waitForSelector(selector)
 	await page.focus(selector)
-	await asyncio.sleep(0.3)
-	await page.keyboard.type("x", delay=30)
+	await asyncio.sleep(0.1)
+	await page.keyboard.type("x", delay=10)
 	await page.evaluate(
 		"(_sel) => { const e = document.querySelector(_sel); if (e) e.select(); }",
 		selector,
 	)
 	await page.keyboard.down("Backspace")
 	await page.keyboard.up("Backspace")
-	await asyncio.sleep(0.2)
-	await page.keyboard.type(text, delay=50)
+	await asyncio.sleep(0.05)
+	await page.keyboard.type(text, delay=25)
 	value = await page.evaluate(
 		"(_sel) => document.querySelector(_sel).value", selector
 	)
@@ -76,7 +76,16 @@ async def _robust_type(page, selector: str, text: str):
 	return value
 
 
-fake = Faker()
+# Lazy-init Faker instance so we don't load its locale data at module level
+# (that adds ~200ms to startup). First call to _get_faker() creates and caches it.
+_fake = None
+
+
+def _get_faker() -> Faker:
+	global _fake
+	if _fake is None:
+		_fake = Faker()
+	return _fake
 
 
 def get_random_string(length):
@@ -240,10 +249,10 @@ async def mail_login(credentials: Credentials):
 	)
 
 
-async def get_mail(mail, max_attempts: int = 80):
+async def get_mail(mail, max_attempts: int = 120):
 	"""Get the latest email from the mail.tm account.
 
-	max_attempts * 1.5s sleep ≈ 90s of polling before giving up.
+	max_attempts * 1.0s sleep ≈ 2min of polling before giving up.
 	"""
 	_step("[mail] polling for MEGA's confirmation email ...", Colours.HEADER)
 	for attempt in range(1, max_attempts + 1):
@@ -258,7 +267,7 @@ async def get_mail(mail, max_attempts: int = 80):
 				f"[mail] waiting for confirmation email ({attempt}/{max_attempts})...",
 				Colours.WARNING,
 			)
-			await asyncio.sleep(1.5)
+			await asyncio.sleep(1.0)
 
 	clear_status_line()
 	raise CouldNotGetMessagesException(
@@ -268,7 +277,7 @@ async def get_mail(mail, max_attempts: int = 80):
 
 async def type_name(page: pyppeteer.page.Page, credentials: Credentials):
 	"""Types name and email into the register fields."""
-	firstname = fake.first_name()
+	firstname = _get_faker().first_name()
 	_step("[register] opening mega.nz/register ...", Colours.HEADER)
 	await page.goto("https://mega.nz/register")
 

@@ -4,6 +4,7 @@ import os
 import shutil
 import json
 import time
+import subprocess
 from urllib.request import urlopen, Request
 import sys
 from mega import Mega
@@ -11,7 +12,7 @@ import psutil
 
 from utilities.models import Colours, Credentials
 
-VERSION = "v1.1.0"
+VERSION = "v1.2.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 
 
@@ -49,35 +50,110 @@ def clear_tmp() -> bool:
 	return False
 
 
-def check_for_updates():
-	"""Checks for updates via the latest release tag.
+# Mapping from sys.platform to GitHub release asset name.
+_RELEASE_ASSETS = {
+	"win32": "MegaTemp-windows.exe",
+	"linux": "MegaTemp-linux",
+	"darwin": "MegaTemp-macos",
+}
 
-	Network/JSON failures are non-fatal: we simply skip the check so the
-	generator keeps working offline or when GitHub rate-limits the request.
-	"""
+_RELEASES_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/releases"
+
+
+def _latest_release_tag() -> str | None:
+	"""Fetch the tag name of the latest GitHub release (not just any tag)."""
 	try:
-		req = Request(UPDATE_URL, headers={"User-Agent": "MegaTemp"})
-		with urlopen(req, timeout=10) as request:
-			json_data = json.loads(request.read().decode())
-	except Exception as e:
-		p_print(f"Could not check for updates ({e}); continuing.", Colours.WARNING)
-		return False
+		req = Request(_RELEASES_URL + "?per_page=1", headers={"User-Agent": "MegaTemp"})
+		with urlopen(req, timeout=10) as resp:
+			data = json.loads(resp.read().decode())
+		if isinstance(data, list) and len(data) > 0:
+			return data[0].get("tag_name")
+	except Exception:
+		pass
+	return None
 
-	if not isinstance(json_data, list) or len(json_data) == 0:
-		return False
 
-	latest_version = json_data[0].get("name")
-	if latest_version is None:
-		return False
-	if latest_version == VERSION:
-		return False
+def auto_update() -> None:
+	"""Check for a newer release; if found, prompt, download, replace, restart.
 
+	Only works when running as a frozen PyInstaller executable (``sys.frozen``).
+	Source installations should use ``git pull`` instead.
+	"""
+	if not getattr(sys, "frozen", False):
+		return  # source install — cannot self-replace
+
+	asset = _RELEASE_ASSETS.get(sys.platform)
+	if asset is None:
+		return  # unknown platform
+
+	latest = _latest_release_tag()
+	if latest is None or latest == VERSION:
+		return  # up to date or unreachable
+
+	# Notify and ask
 	p_print(
-		f"New version available ({latest_version})! Download it from "
-		f"https://github.com/SchooiCodes/MegaTemp/releases/tag/{latest_version}",
+		f"New version available: {latest} (you have {VERSION})",
 		Colours.WARNING,
 	)
-	return True
+	answer = input("Update now? [Y/n]: ").strip().lower()
+	if answer in ("n", "no"):
+		return
+
+	# Download
+	url = f"https://github.com/SchooiCodes/MegaTemp/releases/download/{latest}/{asset}"
+	download_path = sys.executable + ".new"
+	p_print(f"Downloading {asset} ({latest}) ...", Colours.HEADER)
+	try:
+		req = Request(url, headers={"User-Agent": "MegaTemp"})
+		with urlopen(req, timeout=180) as resp:
+			total = int(resp.headers.get("Content-Length", 0))
+			downloaded = 0
+			with open(download_path, "wb") as f:
+				while True:
+					chunk = resp.read(65536)
+					if not chunk:
+						break
+					f.write(chunk)
+					downloaded += len(chunk)
+					if total:
+						pct = downloaded * 100 // total
+						sys.stdout.write(f"\r  {pct}% ({downloaded // 1024} KiB)")
+						sys.stdout.flush()
+		print()
+	except Exception as e:
+		p_print(f"Download failed: {e}", Colours.FAIL)
+		try:
+			os.remove(download_path)
+		except Exception:
+			pass
+		return
+
+	os.chmod(download_path, 0o755)
+
+	# Atomic replace: rename current exe to .old, new to current path.
+	old_path = sys.executable + ".old"
+	exe_path = sys.executable
+	try:
+		if os.path.exists(old_path):
+			os.remove(old_path)
+		os.rename(exe_path, old_path)
+		os.rename(download_path, exe_path)
+	except Exception as e:
+		p_print(f"Replace failed: {e}", Colours.FAIL)
+		try:
+			os.remove(download_path)
+		except Exception:
+			pass
+		return
+
+	p_print(f"Updated to {latest}! Restarting...", Colours.OKGREEN)
+
+	# Restart: on POSIX use execv (in-process replace); on Windows spawn new.
+	if sys.platform == "win32":
+		subprocess.Popen([exe_path] + sys.argv)
+	else:
+		os.execv(exe_path, sys.argv)
+	sys.exit(0)
 
 
 def delete_default(credentials: Credentials):

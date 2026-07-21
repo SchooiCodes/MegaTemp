@@ -1,304 +1,128 @@
 # MegaTemp
 
-> Generate MEGA accounts from the command line, upload files, and produce
-> shareable links — as many times as you like, with loops.
+> Generate MEGA.nz accounts from the command line — disposable email, headless
+> browser, file upload, and loops.
 
-MegaTemp automates MEGA account registration using a disposable
-[mail.tm](https://mail.tm) inbox for confirmation and a headless Chromium
-browser for the sign-up flow. It can also upload files to the freshly created
-account and hand back a public share link, keep generated accounts "alive" by
-periodically logging in, and export credentials in a custom format.
+[![Ruff](https://github.com/SchooiCodes/MegaTemp/actions/workflows/ruff.yml/badge.svg)](https://github.com/SchooiCodes/MegaTemp/actions/workflows/ruff.yml)
+[![Build](https://github.com/SchooiCodes/MegaTemp/actions/workflows/build.yml/badge.svg)](https://github.com/SchooiCodes/MegaTemp/actions/workflows/build.yml)
 
 ---
 
 ## ⚠️ Disclaimer
 
-This project is provided for **educational and personal-automation purposes
-only**. Automated account creation may violate [MEGA's Terms of
-Service](https://mega.nz/terms). The authors are not responsible for any
-misuse, account suspension, or other consequences resulting from the use of
-this software. Use it at your own risk and in accordance with the laws and
-terms that apply to you.
+**For educational and personal-automation purposes only.** Automated account
+creation may violate [MEGA's Terms of Service](https://mega.nz/terms). Use at
+your own risk.
 
 ---
 
-## Acknowledgements
+## Quick start
 
-MegaTemp is a fork of
-[**qtchaos/py_mega_account_generator**](https://github.com/qtchaos/py_mega_account_generator),
-which did the original heavy lifting (the mail.tm integration, the MEGA
-browser automation, and the upload/keepalive services). All credit for the
-original design and implementation goes to **qtchaos**.
+```bash
+git clone https://github.com/SchooiCodes/MegaTemp.git
+cd MegaTemp
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
 
-This fork focuses on:
-
-- Making registration actually **succeed** on current MEGA markup (the upstream
-  flow silently created dead accounts — see *How it works* below).
-- Robustness fixes for modern Python (3.11+), `tenacity` and `pymailtm`
-  compatibility, and headless Chromium on Linux.
-- Cleaner repository hygiene (license, code of conduct, contributing guide).
-
-MegaTemp is distributed under the same **GPL-3.0** license as the upstream
-project, in compliance with the GPL.
+- Chromium (or Chrome, Brave, Edge) must be installed. If not auto-detected,
+  you'll be prompted for the path on first run.
+- Full docs: [`docs/`](./docs/)
 
 ---
 
 ## Features
 
-- 🪄 **One-command account generation** — `python main.py` spits out a working
-  MEGA account and saves its credentials.
-- 📧 **Disposable email** — uses [mail.tm](https://mail.tm) so no real inbox is
-  required; confirmation links are fetched automatically.
-- 🌐 **Headless browser** — drives MEGA's sign-up SPA with Pyppeteer +
-  Chromium (or any Chromium-based browser).
-- 📤 **File upload + public links** — upload a file to each new account and get
-  a shareable link (`-f`, `-p`).
-- 🔁 **Loops** — generate or upload as many times as you want (`-l`).
-- 💤 **Keepalive** — log into every saved account to keep it from being purged
-  (`-ka`).
-- 📝 **Custom credential formats** — control exactly how credentials are saved.
+| Feature | How |
+|---------|-----|
+| **Single account** | `python main.py` — opens the interactive TUI menu |
+| **Mass generation** | Menu → *Loop Create*, or `python main.py -l 10` |
+| **File upload** | `python main.py -f photo.jpg -p` (uploads + public link) |
+| **Keep accounts alive** | `python main.py -ka` (logs into every saved account) |
+| **Export credentials** | Menu → *Export Credentials*, or `python main.py -e` |
+| **Disposable email** | [mail.tm](https://mail.tm) inboxes — no real email needed |
+| **Headless browser** | Pyppeteer + Chromium (watch it with `-sh`) |
+| **Custom format** | `config.json` → `accountFormat: "{email}#{password}"` |
+| **Prebuilt binaries** | [Releases](https://github.com/SchooiCodes/MegaTemp/releases) — no Python required |
 
 ---
 
-## Requirements
+## TUI (Interactive Menu)
 
-| Requirement | Notes |
-| --- | --- |
-| **Python** | 3.10 or newer (tested on 3.14). |
-| **A Chromium-based browser** | Chromium, Chrome, Brave or Edge. The executable path is configured in `config.json`. |
-| **Git** | Only needed to clone the repo. |
-| **Internet access** | Required for mail.tm and mega.nz. |
+Run without arguments:
 
-> [!NOTE]
-> The maximum upload size of a file is **20 GB**, since this is the limit on a
-> free MEGA account.
-
----
-
-## Installation
-
-```bash
-git clone https://github.com/SchooiCodes/MegaTemp.git
-cd MegaTemp
-
-# Create an isolated environment (recommended)
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-
-pip install -r requirements.txt
+```
+MegaTemp v1.2.0
+╔══════════════════════════════════════════════════════╗
+║  Create Account                                      ║
+║  Loop Create                                         ║
+║  View Credentials                                    ║
+║  Export Credentials                                  ║
+║  Keep Alive Accounts                                 ║
+║  Upload File                                         ║
+║  Settings                                            ║
+║  Exit                                                ║
+╚══════════════════════════════════════════════════════╝
 ```
 
-### Configuring the browser
+**↑ ↓** navigate · **Enter** select · **Esc** back/exit
 
-Open `config.json` and point `executablePath` at your Chromium-based browser.
-For example, on many Linux systems:
+Settings (per-session): max retries, visible browser, CSV export toggle.
+
+---
+
+## CLI Reference
+
+| Flag | Description |
+|------|-------------|
+| `-f <path>` | Upload a file to the new account |
+| `-p` | Public share link for the uploaded file |
+| `-l <n>` | Loop `n` times (prints summary) |
+| `-a <n>` | Max registration attempts per account (default 4) |
+| `-e` | Export all saved credentials to one file |
+| `-ka` | Log into all accounts to keep them alive |
+| `-v` | Verbose logging |
+| `-sh` | Show the Chromium window (non-headless) |
+| `-csv` | Also export each account to `credentials/accounts.csv` |
+
+> **Don't** combine services (`-e`, `-ka`) with upload (`-f`, `-p`).
+
+---
+
+## Credentials
+
+Saved to `credentials/` folder. Default is one JSON file per account:
 
 ```json
-{
-  "executablePath": "/usr/bin/chromium",
-  "accountFormat": ""
-}
+{"email": "user@web-library.net", "emailPassword": "abc123", "password": "xyz789"}
 ```
 
-If `executablePath` is left empty, the program will prompt you for it on first
-run.
+- `email` / `password` — your MEGA login
+- `emailPassword` — password for the disposable mail.tm inbox
 
-### Standalone executable (no Python needed)
-
-If you just want to **run MegaTemp on a machine that has no Python**, build a
-single self-contained binary with [PyInstaller](https://pyinstaller.org/):
-
-```bash
-pip install -r requirements.txt pyinstaller
-pyinstaller MegaTemp.spec --noconfirm --clean
-# -> dist/MegaTemp  (Windows: dist/MegaTemp.exe)
-```
-
-Or use the helpers: `./build.sh` (Linux/macOS) / `build.ps1` (Windows).
-
-> [!IMPORTANT]
-> The bundled executable contains Python + all the libraries, but **not**
-> Chromium. The target machine still needs a Chromium-based browser installed;
-> set its path in `config.json` (`executablePath`) on first run.
-
-Prebuilt binaries for Linux / Windows / macOS are also produced automatically
-by the **Build executable** GitHub Actions workflow (download from the Actions
-page or a release).
+Set `accountFormat` in `config.json` for custom output (e.g.
+`"{email}#{password}"`).
 
 ---
 
-## Usage
+## Installation details
 
-Run it with no arguments to generate a single account:
-
-```bash
-python main.py
-```
-
-The credentials are printed to the console and written to the `credentials/`
-folder.
-
-### Uploading a file
-
-```bash
-python main.py -f FILENAME -p
-```
-
-This uploads `FILENAME` to a new account and prints a **publicly shareable
-link**.
-
-### Keeping accounts alive
-
-MEGA tends to purge accounts that are never logged into, so run the keepalive
-service periodically:
-
-```bash
-python main.py -ka -v
-```
-
-This logs into every saved account and prints the storage used (`-v` for
-verbose).
-
-### Mass generation / uploads
-
-```bash
-python main.py -p -f FILENAME -l TIMES_TO_LOOP
-```
+See [Installation](docs/Installation.md) for:
+- Virtual environment setup
+- Browser configuration
+- Building standalone executables
 
 ---
 
-## Credential format
+## Changelog
 
-By default each account is saved as a separate JSON file:
-
-```json
-{"email": "*******@*******.com", "emailPassword": "*****", "password": "*********"}
-```
-
-- `email` / `password` — use these to log into the **MEGA** account later.
-- `emailPassword` — the password of the disposable **mail.tm** inbox (handy if
-  you ever need to re-check the inbox).
-
-### Custom format
-
-Set `accountFormat` in `config.json` to control the output. The following
-placeholders are supported:
-
-| Placeholder | Meaning |
-| --- | --- |
-| `{email}` | Email used for the MEGA account. |
-| `{emailPassword}` | Password of the mail.tm inbox. |
-| `{password}` | Password of the MEGA account. |
-
-For example, to write `email#password` lines to `credentials/accounts.txt`,
-set:
-
-```json
-{ "accountFormat": "{email}#{password}" }
-```
-
-Setting `accountFormat` to `""` restores the default per-account JSON files.
-
----
-
-## Arguments
-
-> [!WARNING]
-> Do not combine the **Services** arguments (`-e`, `-ka`) with the file-upload
-> arguments (`-f`, `-p`).
-
-| Argument | Description |
-| --- | --- |
-| `-f <file>`, `--file <file>` | Uploads a file to the generated account. |
-| `-p`, `--public` | Generates a shareable link to the uploaded file (use with `-f`). |
-| `-l <n>`, `--loop <n>` | Loops the program `n` times. |
-| `-e`, `--extract` | Compiles all saved `.json` credentials into a single file using the configured format. |
-| `-ka`, `--keepalive` | Logs into the accounts to keep them alive. |
-| `-v`, `--verbose` | Shows storage left while using keepalive. |
-
----
-
-## How it works (and why this fork exists)
-
-The registration flow has two browser phases:
-
-1. **Sign-up** — Pyppeteer fills the MEGA registration form
-   (`#register-firstname`, `#register-email`, `#register-password`) and submits
-   it. MEGA's password field uses a custom input handler, so the value must be
-   typed with an explicit focus + per-character delay or it ends up **empty**.
-2. **Confirmation** — the confirmation link from mail.tm opens a page where the
-   account password is entered a second time to finish creating the account.
-
-The upstream project typed the registration password with `page.type()` right
-after focusing the field. MEGA's custom password input drops the **first
-keystroke** when typing starts immediately after focus, so the stored password
-was silently one character short of what we typed. Confirmation then rejected
-it (`Invalid password`) and the saved credentials were **dead** — logging in
-later reported *"invalid email or password."*
-
-MegaTemp fixes this by:
-
-- Typing the password through a robust routine in `utilities/web.py`
-  (`_robust_type`): focus, prime with a throwaway character, clear it, then type
-  the real password with a per-character delay, and **verify** the field holds
-  the exact value before continuing (it raises otherwise, so a dead account is
-  never saved).
-- Detecting a *successful* confirmation by leaving the confirm page (the
-  recovery-key screen) instead of relying on an outdated `#freeStart` selector,
-  and raising on failure so the run retries with a fresh email.
-- Creating a fresh browser page per attempt so a transient Pyppeteer error
-  can't poison the retry loop.
-
----
-
-## Project layout
-
-```
-MegaTemp/
-├── main.py              # Entry point, argument handling, registration loop
-├── config.json          # Browser path + credential format (gitignored)
-├── requirements.txt
-├── pyproject.toml       # Ruff / mypy config
-├── services/
-│   ├── alive.py         # Keepalive service
-│   ├── upload.py        # File upload + public link
-│   └── extract.py       # Credential export
-├── utilities/
-│   ├── web.py           # Browser automation (register / confirm / mail)
-│   ├── etc.py           # Helpers (credentials, printing, etc.)
-│   ├── fs.py            # Config + credential file I/O
-│   └── types.py         # Data types
-└── .github/             # CI + community health files
-```
-
----
-
-## Development
-
-Formatting/linting is handled by [Ruff](https://docs.astral.sh/ruff/) (configured
-in `pyproject.toml`). A GitHub Actions workflow runs it on every push/PR.
-
-```bash
-pip install ruff
-ruff check .
-ruff format .
-```
-
-Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+See [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
 ## License
 
-Distributed under the **GNU General Public License v3.0**. See
-[LICENSE](./LICENSE).
+**GNU General Public License v3.0** — see [LICENSE](./LICENSE).
 
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GPLv3. It is provided without warranty of any kind.
-
----
-
-<p align="center">
-  Forked from <a href="https://github.com/qtchaos/py_mega_account_generator">qtchaos/py_mega_account_generator</a>
-  · Licensed under GPL-3.0
-</p>
+Forked from [qtchaos/py_mega_account_generator](https://github.com/qtchaos/py_mega_account_generator).
