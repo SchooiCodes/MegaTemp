@@ -11,6 +11,37 @@ from utilities.models import Colours, Credentials, Config, migrate_config
 CONFIG_FILE = "config.json"
 
 
+def _validate_config(data: dict) -> None:
+	"""Warn about config issues (bad paths, suspicious values)."""
+	if not data:
+		return
+	# Warn if executablePath points to a non-existent file
+	exec_path = data.get("executablePath", "")
+	if exec_path and not os.path.isfile(os.path.expanduser(exec_path)):
+		p_print(
+			f"Config: executablePath '{exec_path}' not found "
+			"(browser auto-detection will be attempted).",
+			Colours.WARNING,
+		)
+	# Warn about improbable maxAttempts values
+	attempts = data.get("maxAttempts", 4)
+	if not isinstance(attempts, int) or attempts < 1 or attempts > 50:
+		p_print(
+			"Config: maxAttempts should be between 1 and 50.",
+			Colours.WARNING,
+		)
+	# Warn about unknown proxy format
+	proxy = data.get("proxy", "")
+	if proxy and not proxy.startswith(
+		("http://", "https://", "socks4://", "socks5://")
+	):
+		p_print(
+			"Config: proxy URL may be missing protocol "
+			"(expected http://, https://, socks4://, or socks5://).",
+			Colours.WARNING,
+		)
+
+
 def read_config() -> Config | None:
 	"""
 	Reads the config file and returns the contents as a dictionary.
@@ -37,6 +68,9 @@ def read_config() -> Config | None:
 
 	# Migrate from older schema versions.
 	json_data = migrate_config(json_data)
+
+	# Validate config values
+	_validate_config(json_data)
 
 	# Reconcile any missing keys from a newer version of the config schema.
 	defaults = asdict(Config())

@@ -67,6 +67,7 @@ from utilities.etc import (
 	separator,
 	elapsed,
 	VERSION,
+	notify,
 )
 from utilities.menu import (
 	Menu,
@@ -455,6 +456,10 @@ def loop_registrations(
 		avg_per = f"{int(mins)}m {secs:.1f}s" if mins else f"{secs:.1f}s"
 		p_print(f"  Avg / success: {avg_per}", Colours.OKCYAN)
 	p_print("Done.", Colours.OKGREEN)
+	notify(
+		"MegaTemp: Loop complete",
+		f"{successes} OK / {failures} FAIL in {total}",
+	)
 	sys.exit(0)
 
 
@@ -552,6 +557,10 @@ def parallel_registrations(
 		avg_per = f"{int(mins)}m {secs:.1f}s" if mins else f"{secs:.1f}s"
 		p_print(f"  Avg / success: {avg_per}", Colours.OKCYAN)
 	p_print("Done.", Colours.OKGREEN)
+	notify(
+		"MegaTemp: Parallel complete",
+		f"{successes} OK / {failures} FAIL in {total}",
+	)
 	sys.exit(0)
 
 

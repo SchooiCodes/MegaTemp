@@ -6,6 +6,7 @@ from mega import Mega
 
 from utilities.etc import Credentials, p_print, Colours, separator
 from utilities.menu import prompt_int, prompt_text, pause
+from utilities.retry import retry
 
 
 def list_files(credentials: Credentials) -> list[dict]:
@@ -15,7 +16,9 @@ def list_files(credentials: Credentials) -> list[dict]:
 	"""
 	mega = Mega()
 	try:
-		mega.login(credentials.email, credentials.password)
+		retry(label="MEGA login", max_attempts=3)(mega.login)(
+			credentials.email, credentials.password
+		)
 	except Exception as e:
 		p_print(f"Login failed for {credentials.email}: {e}", Colours.FAIL)
 		return []

@@ -17,6 +17,48 @@ VERSION = "v1.3.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 
 
+def notify(title: str, message: str) -> None:
+	"""Show a desktop notification (best-effort, silent failure)."""
+	import sys as _sys
+	import subprocess as _sp
+
+	if _sys.platform == "linux":
+		try:
+			_sp.run(
+				["notify-send", title, message],
+				timeout=5,
+				capture_output=True,
+			)
+		except Exception:
+			pass
+	elif _sys.platform == "darwin":
+		try:
+			_sp.run(
+				[
+					"osascript",
+					"-e",
+					f'display notification "{message}" with title "{title}"',
+				],
+				timeout=5,
+				capture_output=True,
+			)
+		except Exception:
+			pass
+	elif _sys.platform == "win32":
+		try:
+			_sp.run(
+				[
+					"powershell",
+					"-Command",
+					f'New-BurntToastNotification -Text "{title}", "{message}"',
+				],
+				timeout=5,
+				capture_output=True,
+			)
+		except Exception:
+			pass
+
+
 def clear_tmp() -> bool:
 	"""Clears tmp folder.
 
