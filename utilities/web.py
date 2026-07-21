@@ -325,10 +325,23 @@ async def type_password(page: pyppeteer.page.Page, credentials: Credentials):
 	p_print("Registered account successfully!", Colours.OKGREEN)
 
 
+# Cache the mail.tm domain list so we don't hit /domains on every attempt.
+_mailtm_domains: list[str] | None = None
+
+
 async def generate_mail() -> Credentials:
 	"""Generate mail.tm account and return account credentials."""
+	global _mailtm_domains
+
 	mail = pymailtm.MailTm()
-	max_retries = 30
+	max_retries = 10
+
+	if _mailtm_domains is None:
+		_step("[mail] fetching available domains ...", Colours.HEADER)
+		_mailtm_domains = mail._get_domains_list()
+	# Reuse cached domains on every attempt to save one HTTP call.
+	mail._get_domains_list = lambda: _mailtm_domains
+
 	for attempt in range(1, max_retries + 1):
 		try:
 			account = mail.get_account()
@@ -338,7 +351,11 @@ async def generate_mail() -> Credentials:
 				f"[mail] generating mail.tm address (attempt {attempt}/{max_retries})...",
 				Colours.WARNING,
 			)
-			await asyncio.sleep(min(attempt, 5))
+			# Exponential backoff with jitter; respects mail.tm's 30 req/min
+			# rate limit. Account creation (~2 req/attempt after domain caching)
+			# is aggressively throttled (HTTP 429).
+			delay = min(attempt * 2 + 1, 12) + random.uniform(0, 2)
+			await asyncio.sleep(delay)
 	else:
 		raise CouldNotGetAccountException(
 			f"Could not create a mail.tm account after {max_retries} attempts "

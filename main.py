@@ -85,11 +85,20 @@ def _quiet_async_exceptions(loop, context):
 
 
 default_installs = [
+	# Windows
 	"C:/Program Files/Google/Chrome/Application/chrome.exe",
 	"C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
 	"C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
 	"C:/Program Files (x86)/BraveSoftware/Brave-Browser/Application/brave.exe",
 	"C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+	# Linux
+	"/usr/bin/chromium",
+	"/usr/bin/chromium-browser",
+	"/usr/bin/google-chrome",
+	"/usr/bin/google-chrome-stable",
+	"/usr/bin/brave-browser",
+	"/snap/bin/chromium",
+	"/usr/bin/microsoft-edge",
 ]
 args = [
 	"--no-sandbox",
@@ -180,7 +189,16 @@ def setup() -> Tuple[str, Config]:
 	else:
 		executable_path = config.executablePath
 
-	# If no Chromium based browser is found, ask the user for the path to one.
+	# Auto-detect a Chromium-based browser from known paths.
+	if not executable_path:
+		for candidate in default_installs:
+			if os.path.exists(candidate):
+				executable_path = candidate
+				p_print(f"Found browser: {executable_path}", Colours.OKGREEN)
+				write_config("executablePath", executable_path, config)
+				break
+
+	# If still not found, ask the user for the path.
 	if not executable_path:
 		p_print(
 			"Failed to find a Chromium based browser. Please make sure you have one installed.",
