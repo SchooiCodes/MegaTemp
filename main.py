@@ -29,6 +29,7 @@ if not hasattr(asyncio, "coroutine"):
 from services.alive import keepalive
 from services.upload import upload_file
 from services.extract import extract_credentials
+from services.download import _action_browse_cloud
 from utilities.fs import (
 	Config,
 	concrete_read_config,
@@ -1209,6 +1210,11 @@ def _run_tui(executable_path, config):
 				"Upload Directory",
 				lambda: _action_upload_dir(executable_path, config),
 				"Upload all files in a folder",
+			),
+			MenuItem(
+				"Browse Cloud",
+				lambda: _action_browse_cloud(executable_path, config),
+				"List and download files from your MEGA account",
 			),
 			MenuItem(
 				"Settings",
