@@ -227,8 +227,16 @@ async def mail_login(credentials: Credentials):
 	"""Logs into the mail.tm account with the generated credentials.
 
 	Retries a bounded number of times (with backoff) on transient failures
-	instead of looping forever.
+	instead of looping forever. If a mail.tm account with unread messages
+	was cached from a previous attempt, it reuses that to avoid burning a
+	fresh disposable inbox on every retry.
 	"""
+	global _last_mail_account, _last_mail_password
+
+	if _last_mail_account is not None:
+		_log("[mail] reusing cached mail.tm account across retries.", Colours.OKCYAN)
+		return _last_mail_account
+
 	max_retries = 10
 	for attempt in range(1, max_retries + 1):
 		try:
@@ -236,6 +244,9 @@ async def mail_login(credentials: Credentials):
 				credentials.id, credentials.email, credentials.emailPassword
 			)
 			_step(f"[mail] logged into mailbox {credentials.email}", Colours.OKGREEN)
+			# Cache for next retry.
+			_last_mail_account = mail
+			_last_mail_password = credentials.emailPassword
 			return mail
 		except CouldNotGetAccountException:
 			p_print(
@@ -337,6 +348,10 @@ async def type_password(page: pyppeteer.page.Page, credentials: Credentials):
 # Cache the mail.tm domain list so we don't hit /domains on every attempt.
 _mailtm_domains: list[str] | None = None
 
+# Reusable mail.tm Account across retries (session persistence).
+_last_mail_account: pymailtm.Account | None = None
+_last_mail_password: str = ""
+
 
 async def generate_mail() -> Credentials:
 	"""Generate mail.tm account and return account credentials.
@@ -347,7 +362,10 @@ async def generate_mail() -> Credentials:
 	suffixes, and we reuse the MailTm client between attempts so the
 	domain list is fetched only once.
 	"""
-	global _mailtm_domains
+	global _mailtm_domains, _last_mail_account, _last_mail_password
+	# Reset session cache since we are generating a brand new email.
+	_last_mail_account = None
+	_last_mail_password = ""
 
 	mail = pymailtm.MailTm()
 

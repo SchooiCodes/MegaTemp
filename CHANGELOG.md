@@ -3,6 +3,53 @@
 All notable changes to MegaTemp are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [v1.3.0] - 2026-07-21
+
+### Added
+- **Proxy support** — `--proxy URL`, `--proxy-file path`, `--proxy-per-attempt`
+  CLI flags for IP rotation. `ProxyManager` class handles rotation, validation,
+  and file-based loading.
+- **Parallel loop mode** — `--parallel N` / `-j N` flag launches multiple
+  Chromium workers concurrently, each with its own browser and optional proxy
+  (~N× throughput for mass generation).
+- **Config schema versioning** — `Config.schemaVersion` with migration path
+  from older configs. New fields: `proxy`, `proxyFile`, `proxyPerAttempt`,
+  `maxAttempts`, `csvExport`, `visibleBrowser`, `emailProvider`.
+- **Settings persistence** — session settings (`maxAttempts`, `visibleBrowser`,
+  `csvExport`) now save to `config.json` and restore on restart.
+- **Config editor in TUI** — Settings → Edit Config lets you change
+  `executablePath`, `accountFormat`, and proxy URL interactively.
+- **Loop checkpoint/resume** — `--resume` flag recovers interrupted batches
+  from a `loop_state.json` checkpoint (saved after every iteration).
+- **Keepalive upgrade** — per-account retries with exponential backoff,
+  summary table (status, quota, age), and `--prune` flag to auto-delete dead
+  accounts.
+- **Enhanced credentials viewer** — interactive mode with `[p]` reveal
+  passwords, `[d]` delete individual accounts, up/down navigation.
+- **Confirmation summaries** — before mass loops, shows estimated time and
+  settings summary, asks for confirmation.
+- **Keyboard shortcuts in menus** — `1`-`9` jump to items, `Ctrl+C` returns
+  to menu gracefully.
+- **Browser auto-download** — Settings → Download Chromium runs
+  `pyppeteer install` and auto-configures the path.
+- **Graceful Ctrl+C** — signal handler prevents traceback dumps.
+- **mail.tm session reuse** — cached account is reused across retries
+  (saves a disposable inbox on transient MEGA failures).
+- **Email provider abstraction** — `utilities/provider.py` defines the
+  `EmailProvider` ABC for future backend support.
+- **Expanded browser detection** — added NixOS, Flatpak, Snap, Homebrew,
+  macOS `.app` bundle, and `%LOCALAPPDATA%` paths.
+
+### Fixed
+- `@dataclass` import missing in `etc.py` on fresh module load.
+- Syntax error in CLI dispatch after keepalive/prune merge.
+- Unused imports cleaned across `main.py` and test file.
+
+### Tests
+- 68 tests (was 58) — added proxy, checkpoint, config migration, keepalive,
+  merge_config, list_credentials test coverage.
+- All existing tests preserved.
+
 ## [v1.2.0] - 2026-07-21
 
 ### Added

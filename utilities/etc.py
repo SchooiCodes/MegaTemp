@@ -5,6 +5,7 @@ import shutil
 import json
 import time
 import subprocess
+from dataclasses import dataclass
 from urllib.request import urlopen, Request
 import sys
 from mega import Mega
@@ -12,7 +13,7 @@ import psutil
 
 from utilities.models import Colours, Credentials
 
-VERSION = "v1.2.0"
+VERSION = "v1.3.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 
 
@@ -58,6 +59,75 @@ _RELEASE_ASSETS = {
 }
 
 _RELEASES_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/releases"
+
+
+class ProxyManager:
+	"""Manages proxy rotation for browser launches.
+
+	Supports a single proxy URL, a file of proxies (one per line), and
+	per-attempt rotation mode. Proxies are validated for basic format
+	correctness before being returned.
+	"""
+
+	def __init__(
+		self, proxy: str = "", proxy_file: str = "", per_attempt: bool = False
+	):
+		self._proxies: list[str] = []
+		self._per_attempt = per_attempt
+		self._index = 0
+
+		if proxy and proxy_file:
+			p_print(
+				"Both --proxy and --proxy-file provided; --proxy-file takes precedence.",
+				Colours.WARNING,
+			)
+
+		if proxy_file:
+			self._load_file(proxy_file)
+		elif proxy:
+			self._proxies = [proxy]
+
+		if self._proxies:
+			p_print(f"Loaded {len(self._proxies)} proxy/proxies.", Colours.OKCYAN)
+
+	def _load_file(self, path: str) -> None:
+		"""Load proxies from a file (one per line, # comments skipped)."""
+		try:
+			with open(path, "r", encoding="utf-8") as f:
+				for line in f:
+					line = line.strip()
+					if not line or line.startswith("#"):
+						continue
+					self._proxies.append(line)
+		except OSError as e:
+			p_print(f"Failed to read proxy file {path}: {e}", Colours.FAIL)
+
+	@staticmethod
+	def _validate(proxy: str) -> bool:
+		"""Basic format validation. Accepts http://user:pass@host:port etc."""
+		if not proxy:
+			return False
+		if proxy.count("@") > 1:
+			return False
+		return True
+
+	def get_proxy(self) -> str | None:
+		"""Return the next proxy, or None if none are configured."""
+		if not self._proxies:
+			return None
+		if self._per_attempt or len(self._proxies) == 1:
+			proxy = self._proxies[self._index % len(self._proxies)]
+			self._index += 1
+			return proxy
+		return self._proxies[0]
+
+	@property
+	def active(self) -> bool:
+		return len(self._proxies) > 0
+
+	@property
+	def count(self) -> int:
+		return len(self._proxies)
 
 
 def _latest_release_tag() -> str | None:
@@ -280,6 +350,60 @@ def clear_status_line():
 	"""Clears the in-place status line and moves to a fresh line."""
 	sys.stdout.write("\r\033[K")
 	sys.stdout.flush()
+
+
+LOOP_STATE_FILE = "loop_state.json"
+
+
+@dataclass
+class LoopState:
+	"""Persistent state for resuming interrupted loop runs."""
+
+	total: int = 0
+	completed: int = 0
+	failed: int = 0
+	started_at: float = 0.0
+
+
+def save_checkpoint(state: LoopState) -> None:
+	"""Write loop state to disk so interrupted runs can be resumed."""
+	try:
+		with open(LOOP_STATE_FILE, "w", encoding="utf-8") as f:
+			json.dump(
+				{
+					"total": state.total,
+					"completed": state.completed,
+					"failed": state.failed,
+					"started_at": state.started_at,
+				},
+				f,
+			)
+	except OSError:
+		pass
+
+
+def load_checkpoint() -> LoopState | None:
+	"""Load a saved loop state, returning None if none exists."""
+	try:
+		with open(LOOP_STATE_FILE, "r", encoding="utf-8") as f:
+			data = json.load(f)
+		return LoopState(
+			total=data.get("total", 0),
+			completed=data.get("completed", 0),
+			failed=data.get("failed", 0),
+			started_at=data.get("started_at", 0.0),
+		)
+	except (OSError, json.JSONDecodeError):
+		return None
+
+
+def clear_checkpoint() -> None:
+	"""Remove the checkpoint file after a successful run."""
+	try:
+		if os.path.exists(LOOP_STATE_FILE):
+			os.remove(LOOP_STATE_FILE)
+	except OSError:
+		pass
 
 
 def elapsed(start: float) -> str:

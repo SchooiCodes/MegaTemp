@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 import time
+import subprocess
 from typing import Tuple
 import pyppeteer
 
@@ -24,6 +25,7 @@ from utilities.fs import (
 	Config,
 	concrete_read_config,
 	read_config,
+	merge_config,
 	write_config,
 	write_default_config,
 	save_credentials,
@@ -47,6 +49,11 @@ from utilities.etc import (
 	clear_tmp,
 	auto_update,
 	delete_default,
+	ProxyManager,
+	LoopState,
+	save_checkpoint,
+	load_checkpoint,
+	clear_checkpoint,
 	separator,
 	elapsed,
 	VERSION,
@@ -60,6 +67,9 @@ from utilities.menu import (
 	prompt_yes_no,
 	pause,
 )
+
+# Proxy manager — populated from CLI args at startup.
+_proxy_manager: ProxyManager = ProxyManager()
 
 # Harmless pyppeteer teardown noise: after we close the browser, pyppeteer's
 # connection may still have in-flight CDP messages whose futures resolve with a
@@ -100,6 +110,8 @@ default_installs = [
 	"C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
 	"C:/Program Files (x86)/BraveSoftware/Brave-Browser/Application/brave.exe",
 	"C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+	os.path.expandvars("%LOCALAPPDATA%/Chromium/Application/chrome.exe"),
+	os.path.expandvars("%LOCALAPPDATA%/Google/Chrome/Application/chrome.exe"),
 	# Linux
 	"/usr/bin/chromium",
 	"/usr/bin/chromium-browser",
@@ -108,22 +120,41 @@ default_installs = [
 	"/usr/bin/brave-browser",
 	"/snap/bin/chromium",
 	"/usr/bin/microsoft-edge",
+	"/run/current-system/sw/bin/chromium",
+	"/app/bin/chromium",
+	# macOS
+	"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+	"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+	"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+	"/opt/homebrew/bin/chromium",
 ]
-args = [
-	"--no-sandbox",
-	"--disable-setuid-sandbox",
-	"--disable-gpu",
-	"--disable-dev-shm-usage",
-	"--no-first-run",
-	"--disable-background-networking",
-	"--disable-sync",
-	"--disable-background-timer-throttling",
-	"--disable-infobars",
-	"--window-position=0,0",
-	"--ignore-certificate-errors",
-	"--ignore-certificate-errors-spki-list",
-	'--user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0"',
-]
+
+
+def _build_browser_args(proxy_override: str | None = None) -> list[str]:
+	"""Build browser launch args, optionally adding proxy."""
+	base = [
+		"--no-sandbox",
+		"--disable-setuid-sandbox",
+		"--disable-gpu",
+		"--disable-dev-shm-usage",
+		"--no-first-run",
+		"--disable-background-networking",
+		"--disable-sync",
+		"--disable-background-timer-throttling",
+		"--disable-infobars",
+		"--window-position=0,0",
+		"--ignore-certificate-errors",
+		"--ignore-certificate-errors-spki-list",
+		'--user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0"',
+	]
+	if proxy_override:
+		base.append(f"--proxy-server={proxy_override}")
+	else:
+		proxy = _proxy_manager.get_proxy()
+		if proxy:
+			base.append(f"--proxy-server={proxy}")
+	return base
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -186,6 +217,45 @@ parser.add_argument(
 	action="store_true",
 	help="Also export every saved account to credentials/accounts.csv.",
 )
+parser.add_argument(
+	"--proxy",
+	required=False,
+	default="",
+	help="Single proxy URL (e.g. http://user:pass@host:port).",
+)
+parser.add_argument(
+	"--proxy-file",
+	required=False,
+	default="",
+	help="File with one proxy URL per line (rotation).",
+)
+parser.add_argument(
+	"--proxy-per-attempt",
+	required=False,
+	action="store_true",
+	help="Rotate proxy on every registration attempt (not just per batch).",
+)
+parser.add_argument(
+	"--prune",
+	required=False,
+	action="store_true",
+	help="When used with --keepalive, delete credential files for accounts that fail login.",
+)
+parser.add_argument(
+	"--resume",
+	required=False,
+	action="store_true",
+	help="Resume an interrupted loop batch from the last checkpoint.",
+)
+parser.add_argument(
+	"-j",
+	"--parallel",
+	required=False,
+	type=int,
+	default=1,
+	help="Number of parallel workers when using --loop. Default 1 (sequential). "
+	"Each worker gets its own browser and optionally a dedicated proxy.",
+)
 
 console_args = parser.parse_args()
 
@@ -241,25 +311,42 @@ def loop_registrations(
 	visible: bool = False,
 	max_attempts: int = 4,
 	export_csv: bool = False,
+	resume: bool = False,
 ):
 	"""Registers accounts in a loop, printing a summary at the end.
 
 	Launching Chromium takes ~8 s, so we launch *one* browser and share it
 	across all loop iterations instead of re-launching per-account.
+
+	When ``resume=True`` and a checkpoint file exists, the loop skips
+	already-completed iterations.
 	"""
 	separator("Loop mode", Colours.HEADER)
 	successes, failures = 0, 0
 	start = time.monotonic()
+	skip = 0
+
+	if resume:
+		cp = load_checkpoint()
+		if cp is not None:
+			skip = cp.completed + cp.failed
+			successes = cp.completed
+			failures = cp.failed
+			p_print(
+				f"Resuming from checkpoint: {cp.completed} done, {cp.failed} failed, "
+				f"skipping {skip} of {loop_count}",
+				Colours.WARNING,
+			)
 
 	async def _run_all():
-		nonlocal successes, failures
+		nonlocal successes, failures, skip
 		p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
 		browser = await pyppeteer.launch(
 			{
 				"headless": not visible,
 				"ignoreHTTPSErrors": True,
 				"userDataDir": f"{os.getcwd()}/tmp",
-				"args": args,
+				"args": _build_browser_args(),
 				"executablePath": executable_path,
 				"autoClose": False,
 				"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
@@ -267,6 +354,9 @@ def loop_registrations(
 		)
 		try:
 			for i in range(loop_count):
+				if skip > 0:
+					skip -= 1
+					continue
 				p_print(f"Loop {i + 1}/{loop_count}", Colours.OKGREEN)
 				# clear_tmp deliberately skipped here: the browser's user-data-dir
 				# is tmp/, and clearing it would wipe the shared browser profile.
@@ -287,6 +377,15 @@ def loop_registrations(
 						successes += 1
 					else:
 						failures += 1
+				# Save checkpoint after every iteration.
+				save_checkpoint(
+					LoopState(
+						total=loop_count,
+						completed=successes,
+						failed=failures,
+						started_at=start,
+					)
+				)
 		finally:
 			try:
 				await browser.close()
@@ -294,9 +393,106 @@ def loop_registrations(
 				pass
 
 	asyncio.run(_run_all())
+	clear_checkpoint()
 
 	total = elapsed(start)
 	separator("Loop summary", Colours.HEADER)
+	p_print(f"Total accounts: {loop_count}", Colours.OKBLUE)
+	p_print(f"  Successful:   {successes}", Colours.OKGREEN)
+	p_print(f"  Failed:       {failures}", Colours.WARNING)
+	p_print(f"  Total time:   {total}", Colours.OKCYAN)
+	if successes:
+		per = (time.monotonic() - start) / successes
+		mins, secs = divmod(per, 60)
+		avg_per = f"{int(mins)}m {secs:.1f}s" if mins else f"{secs:.1f}s"
+		p_print(f"  Avg / success: {avg_per}", Colours.OKCYAN)
+	p_print("Done.", Colours.OKGREEN)
+	sys.exit(0)
+
+
+def parallel_registrations(
+	loop_count: int,
+	executable_path: str,
+	config: Config,
+	parallelism: int,
+	visible: bool = False,
+	max_attempts: int = 4,
+	export_csv: bool = False,
+):
+	"""Register accounts concurrently using N parallel workers.
+
+	Each worker launches its own Chromium browser. When proxies are
+	configured with --proxy-file, each worker draws from the shared
+	rotation so they naturally use different IPs.
+	"""
+	separator(f"Parallel mode ({parallelism} workers)", Colours.HEADER)
+	successes, failures = 0, 0
+	start = time.monotonic()
+	_lock = asyncio.Lock()
+
+	async def _worker(sem: asyncio.Semaphore, worker_id: int):
+		nonlocal successes, failures
+		worker_proxy = (
+			_proxy_manager._proxies[worker_id % len(_proxy_manager._proxies)]
+			if _proxy_manager.active
+			else None
+		)
+		p_print(
+			f"Worker {worker_id} starting{' with proxy' if worker_proxy else ''}...",
+			Colours.OKCYAN,
+		)
+		browser = await pyppeteer.launch(
+			{
+				"headless": not visible,
+				"ignoreHTTPSErrors": True,
+				"userDataDir": f"{os.getcwd()}/tmp_{worker_id}",
+				"args": _build_browser_args(proxy_override=worker_proxy),
+				"executablePath": executable_path,
+				"autoClose": False,
+				"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
+			}
+		)
+		try:
+			while True:
+				async with sem:
+					pass
+				# Acquire the global slot
+				async with _lock:
+					if successes + failures >= loop_count:
+						return
+				try:
+					await register(
+						None,
+						executable_path,
+						config,
+						visible=visible,
+						max_attempts=max_attempts,
+						export_csv=export_csv,
+						_browser=browser,
+					)
+					async with _lock:
+						successes += 1
+				except SystemExit as e:
+					async with _lock:
+						if e.code is None or e.code == 0:
+							successes += 1
+						else:
+							failures += 1
+		finally:
+			try:
+				await browser.close()
+			except Exception:
+				pass
+
+	async def _run_all():
+		sem = asyncio.Semaphore(parallelism)
+		tasks = [_worker(sem, i) for i in range(parallelism)]
+		await asyncio.gather(*tasks)
+
+	asyncio.run(_run_all())
+
+	total = elapsed(start)
+	separator("Parallel summary", Colours.HEADER)
 	p_print(f"Total accounts: {loop_count}", Colours.OKBLUE)
 	p_print(f"  Successful:   {successes}", Colours.OKGREEN)
 	p_print(f"  Failed:       {failures}", Colours.WARNING)
@@ -347,7 +543,7 @@ async def register(
 				"headless": not visible,
 				"ignoreHTTPSErrors": True,
 				"userDataDir": f"{os.getcwd()}/tmp",
-				"args": args,
+				"args": _build_browser_args(),
 				"executablePath": executable_path,
 				"autoClose": False,  # We run into runtime errors if we use autoClose
 				"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
@@ -492,11 +688,31 @@ async def register(
 # Interactive TUI
 # --------------------------------------------------------------------------- #
 # Runtime settings that the menu can toggle. They feed directly into register().
-_SETTINGS = {
-	"attempts": 4,
-	"visible": False,
-	"export_csv": False,
-}
+# Initialised from saved config so changes persist across sessions.
+_SETTINGS = {}
+
+
+def _load_settings():
+	global _SETTINGS
+	cfg = read_config()
+	_SETTINGS = {
+		"attempts": cfg.maxAttempts if cfg else 4,
+		"visible": cfg.visibleBrowser if cfg else False,
+		"export_csv": cfg.csvExport if cfg else False,
+	}
+
+
+def _save_settings():
+	merge_config(
+		{
+			"maxAttempts": _SETTINGS["attempts"],
+			"visibleBrowser": _SETTINGS["visible"],
+			"csvExport": _SETTINGS["export_csv"],
+		}
+	)
+
+
+_load_settings()
 
 
 def _action_create_one(executable_path, config):
@@ -522,24 +738,49 @@ def _action_loop_create(executable_path, config):
 	"""Prompt for a count, then loop-create."""
 	clear_tmp()
 	count = prompt_int("How many accounts to create", 5, 1, 1000)
+	parallel = prompt_int("Parallel workers (1 = sequential)", 1, 1, 50)
+	est_secs = count * 35 // max(parallel, 1)
+	mins, secs = divmod(est_secs, 60)
+	est_str = f"{int(mins)}m {secs}s" if mins else f"{secs}s"
+	p_print(
+		f"Creating {count} accounts ({parallel} worker(s)) — est. ~{est_str}",
+		Colours.WARNING,
+	)
+	if not prompt_yes_no("Continue?"):
+		return
 	try:
-		loop_registrations(
-			count,
-			executable_path,
-			config,
-			visible=_SETTINGS["visible"],
-			max_attempts=_SETTINGS["attempts"],
-			export_csv=_SETTINGS["export_csv"],
-		)
+		if parallel > 1:
+			parallel_registrations(
+				count,
+				executable_path,
+				config,
+				parallelism=parallel,
+				visible=_SETTINGS["visible"],
+				max_attempts=_SETTINGS["attempts"],
+				export_csv=_SETTINGS["export_csv"],
+			)
+		else:
+			loop_registrations(
+				count,
+				executable_path,
+				config,
+				visible=_SETTINGS["visible"],
+				max_attempts=_SETTINGS["attempts"],
+				export_csv=_SETTINGS["export_csv"],
+			)
 	except SystemExit:
-		# loop_registrations calls sys.exit(0) at the end (for CLI mode);
-		# swallow it so we return to the menu instead of quitting.
 		pass
 	pause("Press Enter to return to the menu...")
 
 
 def _action_view_credentials(config):
-	"""List saved credentials with file size and a masked password."""
+	"""List saved credentials with file size and a masked password.
+
+	Interactive key bindings:
+	  p  — toggle password reveal
+	  d  — delete the selected credential (after confirmation)
+	  q  — return to menu
+	"""
 	import json
 
 	folder = "./credentials"
@@ -548,29 +789,67 @@ def _action_view_credentials(config):
 		pause()
 		return
 
-	json_files = [f for f in os.listdir(folder) if f.endswith(".json")]
+	json_files = sorted([f for f in os.listdir(folder) if f.endswith(".json")])
 	if not json_files:
 		p_print("No saved credentials yet.", Colours.WARNING)
 		pause()
 		return
 
-	separator(f"Saved credentials ({len(json_files)})", Colours.HEADER)
-	for f in sorted(json_files):
-		path = os.path.join(folder, f)
-		try:
-			with open(path, "r", encoding="utf-8") as fh:
-				data = json.load(fh)
-		except (json.JSONDecodeError, OSError):
-			p_print(f"  ! {f} (unreadable)", Colours.WARNING)
-			continue
-		email = data.get("email", "?")
-		if len(email) > 38:
-			email = email[:35] + "..."
-		pw = data.get("password", "")
-		masked = ("*" * max(len(pw) - 2, 0)) + pw[-2:] if pw else "?"
-		size = os.path.getsize(path)
-		p_print(f"  {email:<38} pw:{masked:<14} {size}B", Colours.OKCYAN)
-	pause()
+	_show_passwords = False
+	_selected = 0
+
+	while True:
+		separator(
+			f"Saved credentials ({len(json_files)})"
+			f" {'[passwords shown]' if _show_passwords else ''}",
+			Colours.HEADER,
+		)
+		for idx, f in enumerate(json_files):
+			path = os.path.join(folder, f)
+			try:
+				with open(path, "r", encoding="utf-8") as fh:
+					data = json.load(fh)
+			except (json.JSONDecodeError, OSError):
+				p_print(f"  ! {f} (unreadable)", Colours.WARNING)
+				continue
+			email = data.get("email", "?")
+			if len(email) > 38:
+				email = email[:35] + "..."
+			pw = data.get("password", "")
+			if _show_passwords:
+				pw_display = pw if pw else "?"
+			else:
+				pw_display = ("*" * max(len(pw) - 2, 0)) + pw[-2:] if pw else "?"
+			size = os.path.getsize(path)
+			marker = ">" if idx == _selected else " "
+			p_print(
+				f" {marker} {email:<38} pw:{pw_display:<14} {size}B",
+				Colours.OKGREEN if idx == _selected else Colours.OKCYAN,
+			)
+		p_print("  [p] reveal  [d] delete  [q] back", Colours.WARNING)
+		key = input().strip().lower()
+		if key == "q":
+			break
+		elif key == "p":
+			_show_passwords = not _show_passwords
+		elif key == "d" and json_files:
+			target = json_files[_selected]
+			if prompt_yes_no(f"Delete {target}? (cannot undo)"):
+				try:
+					os.remove(os.path.join(folder, target))
+					p_print(f"Deleted {target}", Colours.OKGREEN)
+					json_files.pop(_selected)
+					if _selected >= len(json_files):
+						_selected = max(0, len(json_files) - 1)
+				except OSError as e:
+					p_print(f"Delete failed: {e}", Colours.FAIL)
+		elif key in ("j", "down") and json_files:
+			_selected = (_selected + 1) % len(json_files)
+		elif key in ("k", "up") and json_files:
+			_selected = (_selected - 1) % len(json_files)
+		if not json_files:
+			p_print("No credentials remaining.", Colours.WARNING)
+			break
 
 
 def _action_export(config):
@@ -587,7 +866,79 @@ def _action_export(config):
 def _action_keepalive(config):
 	"""Keep all saved accounts alive."""
 	p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)
-	keepalive(console_args.verbose)
+	prune = prompt_yes_no("Remove dead accounts automatically?")
+	keepalive(console_args.verbose, prune=prune)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_download_browser(_unused_executable_path, _unused_config):
+	"""Try to download Chromium for the current platform."""
+	try:
+		p_print("Attempting to download Chromium via pyppeteer...", Colours.HEADER)
+		subprocess.check_call(
+			[sys.executable, "-m", "pyppeteer", "install"],
+			timeout=120,
+		)
+		p_print("Chromium downloaded successfully!", Colours.OKGREEN)
+		# Try to find it and update config.
+		import glob as _glob
+
+		candidates = (
+			_glob.glob(
+				os.path.expanduser(
+					"~/.local/share/pyppeteer/local-chromium/*/chrome-linux*/chrome"
+				)
+			)
+			+ _glob.glob(
+				os.path.expanduser(
+					"~/.local/share/pyppeteer/local-chromium/*/chrome-win/chrome.exe"
+				)
+			)
+			+ _glob.glob(
+				os.path.expanduser(
+					"~/.local/share/pyppeteer/local-chromium/*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium"
+				)
+			)
+		)
+		if candidates:
+			cfg = read_config()
+			if cfg:
+				write_config("executablePath", candidates[0], cfg)
+				p_print(f"Auto-configured: {candidates[0]}", Colours.OKGREEN)
+	except Exception as e:
+		p_print(f"Failed to download Chromium: {e}", Colours.FAIL)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_edit_config(_unused_executable_path, config):
+	"""Edit config.json settings via interactive prompts."""
+	from utilities.fs import read_config, write_config
+
+	cfg = read_config()
+	if cfg is None:
+		p_print("Config not available.", Colours.FAIL)
+		return
+
+	p_print("Editing configuration. Leave blank to keep current value.", Colours.HEADER)
+	path = prompt_text(
+		f"Browser executable path [{cfg.executablePath or '(auto-detect)'}]",
+		default=cfg.executablePath,
+	)
+	if path:
+		write_config("executablePath", path, cfg)
+	fmt = prompt_text(
+		f"Account format [{cfg.accountFormat or '(JSON per account)'}]",
+		default=cfg.accountFormat,
+	)
+	if fmt is not None:
+		merge_config({"accountFormat": fmt})
+	proxy = prompt_text(
+		f"Proxy URL [{cfg.proxy or '(none)'}]",
+		default=cfg.proxy,
+	)
+	if proxy is not None:
+		merge_config({"proxy": proxy})
+	p_print("Configuration updated.", Colours.OKGREEN)
 	pause("Press Enter to return to the menu...")
 
 
@@ -642,6 +993,16 @@ def _build_settings_menu():
 			"Also write each account to accounts.csv",
 			value=lambda: "Yes" if _SETTINGS["export_csv"] else "No",
 		),
+		MenuItem(
+			"Edit Config",
+			lambda: _action_edit_config("", None),
+			"executablePath, accountFormat, proxy",
+		),
+		MenuItem(
+			"Download Chromium",
+			lambda: _action_download_browser("", None),
+			"Auto-download Chrome via pyppeteer",
+		),
 		MenuItem("Back", lambda: _BACK, "Return to the main menu"),
 	]
 	return Menu("Settings", items)
@@ -650,11 +1011,13 @@ def _build_settings_menu():
 def _set_attempts():
 	val = prompt_int("Max registration attempts", _SETTINGS["attempts"], 1, 50)
 	_SETTINGS["attempts"] = val
+	_save_settings()
 	pause("Press Enter to return to the menu...")
 
 
 def _toggle(key):
 	_SETTINGS[key] = not _SETTINGS[key]
+	_save_settings()
 	pause("Press Enter to return to the menu...")
 
 
@@ -695,7 +1058,7 @@ def _run_tui(executable_path, config):
 			MenuItem(
 				"Settings",
 				lambda: _open_settings(),
-				"Attempts, visible mode, CSV export",
+				"Attempts, visible mode, CSV export, config editor",
 			),
 			MenuItem(
 				"Exit",
@@ -720,6 +1083,27 @@ def _open_settings():
 			break
 
 
+def _sigint_handler(signum, frame):
+	"""Graceful Ctrl+C: don't dump a traceback, just exit cleanly."""
+	p_print("\nInterrupted. Exiting...", Colours.WARNING)
+	sys.exit(0)
+
+
+def _setup_signal_handlers():
+	import signal
+
+	signal.signal(signal.SIGINT, _sigint_handler)
+
+
+_setup_signal_handlers()
+
+# Initialise global proxy manager from CLI args.
+_proxy_manager = ProxyManager(
+	proxy=console_args.proxy,
+	proxy_file=console_args.proxy_file,
+	per_attempt=console_args.proxy_per_attempt,
+)
+
 if __name__ == "__main__":
 	set_verbose(console_args.verbose)
 	auto_update()
@@ -734,16 +1118,28 @@ if __name__ == "__main__":
 		extract_credentials(config.accountFormat)
 	elif console_args.keepalive:
 		p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)
-		keepalive(console_args.verbose)
+		keepalive(console_args.verbose, prune=console_args.prune)
 	elif console_args.loop is not None and console_args.loop > 1:
-		loop_registrations(
-			console_args.loop,
-			executable_path,
-			config,
-			console_args.visible,
-			console_args.attempts,
-			console_args.export_csv,
-		)
+		if console_args.parallel > 1:
+			parallel_registrations(
+				console_args.loop,
+				executable_path,
+				config,
+				parallelism=console_args.parallel,
+				visible=console_args.visible,
+				max_attempts=console_args.attempts,
+				export_csv=console_args.export_csv,
+			)
+		else:
+			loop_registrations(
+				console_args.loop,
+				executable_path,
+				config,
+				console_args.visible,
+				console_args.attempts,
+				console_args.export_csv,
+				resume=console_args.resume,
+			)
 	elif any(
 		[
 			console_args.file,

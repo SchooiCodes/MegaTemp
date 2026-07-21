@@ -6,7 +6,7 @@ import json
 import sys
 
 from utilities.etc import p_print
-from utilities.models import Colours, Credentials, Config
+from utilities.models import Colours, Credentials, Config, migrate_config
 
 CONFIG_FILE = "config.json"
 
@@ -34,6 +34,9 @@ def read_config() -> Config | None:
 			pass
 		write_default_config()
 		return None
+
+	# Migrate from older schema versions.
+	json_data = migrate_config(json_data)
 
 	# Reconcile any missing keys from a newer version of the config schema.
 	defaults = asdict(Config())
@@ -140,3 +143,48 @@ def save_credentials_csv(credentials: Credentials) -> None:
 		p_print(f"Exported credentials to {csv_path}", Colours.OKCYAN)
 	except OSError as e:
 		p_print(f"Failed to write accounts.csv: {e}", Colours.FAIL)
+
+
+def merge_config(overrides: dict, config: Config | None = None) -> Config:
+	"""Merge key-value overrides into the config and write to disk.
+
+	If config is None it will be read from disk first. Returns the updated Config.
+	"""
+	if config is None:
+		config = read_config()
+		if config is None:
+			config = write_default_config()
+			if config is None:
+				config = concrete_read_config()
+
+	for k, v in overrides.items():
+		config[k] = v
+	with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+		f.write(json.dumps(asdict(config), indent=4, sort_keys=True))
+	return config
+
+
+def list_credentials() -> list[tuple[str, Credentials, float]]:
+	"""Return sorted list of (filename, Credentials, mtime) from credentials/."""
+	import glob
+
+	result: list[tuple[str, Credentials, float]] = []
+	if not os.path.isdir("credentials"):
+		return result
+	for path in sorted(
+		glob.glob("credentials/*.json"), key=os.path.getmtime, reverse=True
+	):
+		try:
+			with open(path, "r", encoding="utf-8") as fh:
+				data = json.load(fh)
+		except (json.JSONDecodeError, OSError):
+			continue
+		creds = Credentials(
+			email=data.get("email", ""),
+			emailPassword=data.get("emailPassword", ""),
+			password=data.get("password", ""),
+			id=data.get("id", ""),
+		)
+		mtime = os.path.getmtime(path)
+		result.append((os.path.basename(path), creds, mtime))
+	return result

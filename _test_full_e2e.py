@@ -77,6 +77,11 @@ class TestTypes:
 		c = Config()
 		assert c.executablePath == ""
 		assert c.accountFormat == ""
+		assert c.schemaVersion == 1
+		assert c.maxAttempts == 4
+		assert c.csvExport is False
+		assert c.visibleBrowser is False
+		assert c.emailProvider == "mailtm"
 
 	def test_config_with_values(self):
 		from utilities.models import Config
@@ -101,7 +106,32 @@ class TestTypes:
 
 		c = Config(executablePath="/bin/chrome")
 		d = asdict(c)
-		assert d == {"executablePath": "/bin/chrome", "accountFormat": ""}
+		assert d["executablePath"] == "/bin/chrome"
+		assert d["accountFormat"] == ""
+		assert d["schemaVersion"] == 1
+		assert d["maxAttempts"] == 4
+		assert d["csvExport"] is False
+		assert d["visibleBrowser"] is False
+		assert d["emailProvider"] == "mailtm"
+
+	def test_migrate_config_v0(self):
+		from utilities.models import migrate_config
+
+		raw = {"executablePath": "/old/path"}
+		migrated = migrate_config(raw)
+		assert migrated["schemaVersion"] == 1
+		assert migrated["executablePath"] == "/old/path"
+		assert migrated["proxy"] == ""
+		assert migrated["maxAttempts"] == 4
+		assert migrated["emailProvider"] == "mailtm"
+
+	def test_migrate_config_idempotent(self):
+		from utilities.models import migrate_config
+
+		raw = {"schemaVersion": 1, "executablePath": "/p"}
+		migrated = migrate_config(raw)
+		assert migrated["schemaVersion"] == 1
+		assert migrated["executablePath"] == "/p"
 
 
 # ======================================================================
@@ -229,6 +259,42 @@ class TestFs:
 		# The '/' in local part should be sanitized
 		assert "weird_name" in json_files[0] or "weird" in json_files[0]
 
+	def test_merge_config_adds_keys(self, isolated_fs):
+		from utilities.fs import merge_config, write_default_config, read_config
+
+		write_default_config()
+		merge_config({"maxAttempts": 8, "visibleBrowser": True})
+		cfg = read_config()
+		assert cfg is not None
+		assert cfg.maxAttempts == 8
+		assert cfg.visibleBrowser is True
+
+	def test_merge_config_preserves_existing(self, isolated_fs):
+		from utilities.fs import merge_config, write_default_config, read_config
+
+		write_default_config()
+		cfg1 = read_config()
+		old_path = cfg1.executablePath
+		merge_config({"maxAttempts": 6})
+		cfg2 = read_config()
+		assert cfg2.executablePath == old_path
+
+	def test_list_credentials_empty(self, isolated_fs):
+		from utilities.fs import list_credentials
+
+		assert list_credentials() == []
+
+	def test_list_credentials_with_files(self, isolated_fs):
+		from utilities.models import Credentials
+		from utilities.fs import save_credentials, list_credentials
+
+		c = Credentials("a@b.com", "mpw", "megapw")
+		save_credentials(c, "")
+		result = list_credentials()
+		assert len(result) == 1
+		fname, creds, _mtime = result[0]
+		assert creds.email == "a@b.com"
+
 
 # ======================================================================
 # etc.py
@@ -322,6 +388,83 @@ class TestEtc:
 
 		assert VERSION.startswith("v")
 		assert "." in VERSION
+
+
+class TestProxyManager:
+	def test_empty(self):
+		from utilities.etc import ProxyManager
+
+		pm = ProxyManager()
+		assert pm.active is False
+		assert pm.get_proxy() is None
+		assert pm.count == 0
+
+	def test_single_proxy(self):
+		from utilities.etc import ProxyManager
+
+		pm = ProxyManager(proxy="http://user:pass@1.2.3.4:8080")
+		assert pm.active is True
+		assert pm.count == 1
+		assert pm.get_proxy() == "http://user:pass@1.2.3.4:8080"
+
+	def test_rotation(self):
+		from utilities.etc import ProxyManager
+
+		pm = ProxyManager(proxy_file="/nonexistent", per_attempt=True)
+		# file doesn't exist → no proxies loaded
+		assert pm.active is False
+		assert pm.count == 0
+
+	def test_rotation_with_file(self, tmp_path):
+		from utilities.etc import ProxyManager
+
+		pf = tmp_path / "proxies.txt"
+		pf.write_text("http://a:1@1.2.3.4:80\nhttp://b:2@5.6.7.8:8080\n")
+		pm = ProxyManager(proxy_file=str(pf), per_attempt=True)
+		assert pm.count == 2
+		assert pm.get_proxy() == "http://a:1@1.2.3.4:80"
+		assert pm.get_proxy() == "http://b:2@5.6.7.8:8080"
+		assert pm.get_proxy() == "http://a:1@1.2.3.4:80"  # wraps around
+
+	def test_validate(self):
+		from utilities.etc import ProxyManager
+
+		assert ProxyManager._validate("http://u:p@1.2.3.4:80") is True
+		assert ProxyManager._validate("") is False
+
+
+class TestCheckpoint:
+	def test_save_and_load(self, tmp_path):
+		from utilities.etc import (
+			save_checkpoint,
+			load_checkpoint,
+			clear_checkpoint,
+			LoopState,
+		)
+
+		old = os.getcwd()
+		os.chdir(tmp_path)
+		state = LoopState(total=50, completed=10, failed=2, started_at=time.monotonic())
+		save_checkpoint(state)
+		loaded = load_checkpoint()
+		assert loaded is not None
+		assert loaded.total == 50
+		assert loaded.completed == 10
+		assert loaded.failed == 2
+		clear_checkpoint()
+		assert load_checkpoint() is None
+		os.chdir(old)
+
+	def test_load_nonexistent(self):
+		from utilities.etc import load_checkpoint
+
+		assert load_checkpoint() is None
+
+	def test_clear_no_file(self):
+		from utilities.etc import clear_checkpoint
+
+		# Should not raise.
+		clear_checkpoint()
 
 
 # ======================================================================
@@ -477,6 +620,29 @@ class TestUpload:
 		upload_file(False, "/nonexistent/file.txt", Credentials())
 		captured = capsys.readouterr()
 		assert "File not found" in captured.out
+		os.chdir(old)
+
+
+class TestAlive:
+	def test_keepalive_no_credentials_folder(self, capsys, tmp_path):
+		from services.alive import keepalive
+
+		old = os.getcwd()
+		os.chdir(tmp_path)
+		keepalive(False)
+		captured = capsys.readouterr()
+		assert "No credentials found" in captured.out
+		os.chdir(old)
+
+	def test_keepalive_empty_folder(self, capsys, tmp_path):
+		from services.alive import keepalive
+
+		old = os.getcwd()
+		os.chdir(tmp_path)
+		os.makedirs("credentials")
+		keepalive(False)
+		captured = capsys.readouterr()
+		assert "No credentials found" in captured.out
 		os.chdir(old)
 
 

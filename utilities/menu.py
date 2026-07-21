@@ -31,6 +31,9 @@ RIGHT = ("\x1b[C", "\x1bOC")
 ENTER = "\r"
 ESCAPE = "\x1b"
 
+# Number keys 1-9 as jump shortcuts.
+_DIGIT_KEYS = tuple(str(i) for i in range(1, 10))
+
 # Box-drawing glyphs (all single-column in a Unicode terminal).
 TL, TR, BL, BR = "\u2554", "\u2557", "\u255a", "\u255d"
 ML, MR = "\u2551", "\u2551"
@@ -226,6 +229,11 @@ class Menu:
 			elif key in DOWN:
 				self.selected = (self.selected + 1) % len(self.items)
 				self._full_redraw = False
+			elif key in _DIGIT_KEYS:
+				idx = int(key) - 1
+				if 0 <= idx < len(self.items):
+					self.selected = idx
+				self._full_redraw = False
 			elif key in (ENTER, *RIGHT):
 				item = self.items[self.selected]
 				if item.callback is None:
@@ -237,6 +245,8 @@ class Menu:
 				if result is _BACK:
 					return _BACK
 			elif key in ("q", "Q", ESCAPE):
+				return _BACK
+			elif key == "\x03":  # Ctrl+C
 				return _BACK
 
 
