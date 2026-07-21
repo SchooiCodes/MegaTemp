@@ -13,6 +13,9 @@ diagtmp
 *.pyc
 .DS_Store
 
+# Auto-generated summaries
+.opencode/summaries/
+
 # PyInstaller build artifacts
 build/
 dist/
