@@ -50,6 +50,14 @@ python main.py
 | **Config editor** | Menu → *Settings → Edit Config* |
 | **Prebuilt binaries** | [Releases](https://github.com/SchooiCodes/MegaTemp/releases) — no Python required |
 | **Auto-update** | Frozen EXE checks for new releases on startup |
+| **Cloud browser** | Menu → *Browse Cloud* — list + download cloud files |
+| **Scheduled keepalive** | `python main.py -ka --interval 24` (runs every 24h) |
+| **Directory upload** | Menu → *Upload Directory* + account picker |
+| **Health dashboard** | Menu → *Storage Info* — per-account status, quota, age |
+| **Account notes/tags** | Menu → *View Credentials* — press `n` for notes, `t` for tags |
+| **Search accounts** | Menu → *View Credentials* — press `/` to filter |
+| **Password strength** | Viewer shows strength label when passwords are revealed |
+| **Config validation** | Warns on bad paths, improbable values, proxy format on load |
 
 ---
 

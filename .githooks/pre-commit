@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "==> Running ruff check..."
+ruff check .
+
+echo "==> Running ruff format check..."
+ruff format --check .

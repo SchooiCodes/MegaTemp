@@ -7,7 +7,7 @@ Run `main.py` with no arguments to open the terminal menu. Navigate with
 settings with **← / →** inside the *Settings* submenu.
 
 ```
-MegaTemp v1.2.0
+MegaTemp v1.3.0
 ╔══════════════════════════════════════════════════════╗
 ║  Create Account                                      ║
 ║  Loop Create                                         ║
@@ -72,6 +72,32 @@ overwriting it.
 | `--proxy-per-attempt` | Rotate proxy on every registration attempt. |
 | `--resume` | Resume an interrupted loop from last checkpoint. |
 
+## CLI reference
+
+| Flag | Long | Description |
+|------|------|-------------|
+| `-ka` | `--keepalive` | Log into all saved accounts to keep them alive |
+| | `--prune` | With `--keepalive`, delete dead account files |
+| | `--interval HOURS` | With `--keepalive`, loop every N hours |
+| `-e` | `--extract` | Export all saved credentials to `credentials.txt` |
+| `-v` | `--verbose` | Verbose logging of registration steps |
+| `-f PATH` | `--file PATH` | Upload a file |
+| | `--upload-dir DIR` | Upload all files in a directory (non-recursive) |
+| `-p` | `--public` | Generate a public share link (use with `-f`) |
+| `-l N` | `--loop N` | Generate N accounts in sequence |
+| `-j N` | `--parallel N` | Generate N accounts concurrently (use with `-l`) |
+| `-sh` | `--visible` | Show the Chromium window |
+| `-a N` | `--attempts N` | Max retries per account (default 4) |
+| `-csv` | `--export-csv` | Also save to `credentials/accounts.csv` |
+| | `--export-jsonl` | Also save to `credentials/accounts.jsonl` |
+| | `--proxy URL` | Single proxy (e.g. `http://user:pass@host:port`) |
+| | `--proxy-file PATH` | File with one proxy per line |
+| | `--proxy-per-attempt` | Rotate proxy on every registration attempt |
+| | `--resume` | Resume an interrupted `--loop` batch |
+| | `--list-cloud` | List files in the most recent MEGA account |
+| | `--download-cloud ID` | Download a cloud file by its node ID |
+| | `--download-dest DIR` | Destination for `--download-cloud` (default `.`) |
+
 ## Examples
 
 ```bash
@@ -83,6 +109,9 @@ python main.py -l 20 -a 8 --export-csv  # mass-generate with summary
 python main.py -l 50 -j 5               # parallel batch (5 concurrent workers)
 python main.py -l 50 -j 10 --proxy-file proxies.txt  # parallel + proxy rotation
 python main.py -l 20 --resume           # resume interrupted batch
+python main.py --list-cloud             # list cloud files
+python main.py --download-cloud FILE_ID --download-dest ./downloads  # download
+python main.py -ka --interval 24        # keep alive every 24 hours
 ```
 
 > [!WARNING]

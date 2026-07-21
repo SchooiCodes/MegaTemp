@@ -40,20 +40,61 @@ All notable changes to MegaTemp are documented here. This project adheres to
 - **Expanded browser detection** — added NixOS, Flatpak, Snap, Homebrew,
   macOS `.app` bundle, and `%LOCALAPPDATA%` paths.
 
-### Added (post-v1.3.0-tag)
-- **Batch upload** — `--upload-dir <path>` CLI flag and `Upload Directory` TUI
-  option uploads all files in a folder to the most recent account.
-- **Upload progress spinner** — animated `| / - \` while mega.upload runs.
-- **Storage info viewer** — TUI menu option queries free quota for each saved
-  account (via `mega.get_quota()`).
-- **JSON Lines export** — `--export-jsonl` flag and Settings toggle write each
-  account to `credentials/accounts.jsonl`.
-- **Clipboard copy** — `c` copies email, `C` copies password to clipboard in
-  the credentials viewer (requires `pyperclip`).
+### Added (post-v1.3.0-tag — code quality)
+- **`separator()` deduplication** — removed local copies from `alive.py` and
+  `download.py`; all share the single import from `utilities.etc`.
+- **Dead code removal** — unreachable duplicate body in `_action_upload_dir`
+  stripped (~30 lines).
+- **`ProxyManager.distribute(count)`** — public method replaces private
+  `_proxies` attribute access in `parallel_registrations`.
+- **Parallel worker robustness** — catches `Exception` (not just `SystemExit`)
+  so one failed worker doesn't kill the entire parallel batch.
+- **`setup.sh` config alignment** — default config now matches runtime
+  `write_default_config()` output.
+
+### Added (post-v1.3.0-tag — new features)
+- **Guerrilla Mail provider** — `utilities/guerrilla.py` implements the
+  `EmailProvider` ABC for disposable emails with no signup required.
+- **Provider registry** — `register_provider()`, `get_provider()`,
+  `get_provider_names()`; built-in mailtm and guerrillamail auto-register.
+- **Provider dispatch in registration flow** — `generate_mail()`,
+  `mail_login()`, `get_mail()` all accept a `provider_name` parameter and
+  route through the `EmailProvider` ABC for non-mail.tm providers.
+- **Account notes/tags** — `Credentials.notes` and `Credentials.tags` fields;
+  viewer shows them inline; `[n]` to edit notes, `[t]` to edit tags.
+- **Password strength estimation** — `utilities/password_strength.py` with
+  entropy-based strength labels shown in the credentials viewer.
+- **Email provider ABC** — concrete `MailTmProvider` and
+  `GuerrillaMailProvider` implementations; both auto-register on import.
+
+### Added (post-v1.3.0-tag — QoL)
+- **Health dashboard** — upgraded Storage Info: ✓/✗ status, quota, age, tags
+  per account with alive/dead summary.
+- **Scheduled keepalive** — `--interval HOURS` flag loops keepalive every N
+  hours with configurable interval.
+- **Search in credentials viewer** — `[/]` key filters accounts by
+  email/notes/tags; `[Esc]` clears filter.
+- **Batch delete in viewer** — `[a]` key deletes all visible (filtered)
+  accounts with one press.
+- **Upload progress bar** — animated `[████░░░░] 60%` bar replaces the simple
+  spinner, showing file size and elapsed time.
+- **Config validation on load** — warns about non-existent executablePath,
+  improbable maxAttempts, or malformed proxy URLs.
+- **Desktop notifications** — `notify()` function uses `notify-send` (Linux),
+  `osascript` (macOS), or PowerShell (Windows); fires on loop completion.
+- **Network retry wrapper** — `utilities/retry.py` with `@retry` decorator
+  (exponential backoff, tenacity-based when available); applied to MEGA login.
 - **Cloud file browser** — `Browse Cloud` TUI option lists files in the most
   recent account and offers download to a local directory.
+- **CLI cloud flags** — `--list-cloud`, `--download-cloud FILE_ID`,
+  `--download-dest DIR`.
 - **Account picker for uploads** — both `Upload File` and `Upload Directory`
   now show a numbered list of saved accounts to choose from.
+
+### Added (post-v1.3.0-tag — packaging)
+- **Dockerfile** — `python:3.12-slim` with Chromium + MegaTemp.
+- **pre-commit hook** — `.githooks/pre-commit` runs `ruff check` + `ruff format`.
+- **Setup script** — `setup.sh` for one-command dev environment setup.
 
 ### Fixed
 - `@dataclass` import missing in `etc.py` on fresh module load.
@@ -61,11 +102,12 @@ All notable changes to MegaTemp are documented here. This project adheres to
 - `--upload-dir` was not triggering the explicit-flags branch in CLI dispatch.
 - Parallel worker semaphore not held across `register()` call (all N workers
   could launch simultaneously).
+- `TimeoutExpired.stdout` bytes decoding in CLI tests (TypeError on substring check).
 - Unused imports cleaned across `main.py` and test file.
 
 ### Tests
-- 72 tests (was 68) — added download module tests (list_files, download_file
-  error handling, separator).
+- 74 tests (was 68) — added download module tests (list_files, download_file
+  error handling, separator, --list-cloud, --download-cloud CLI tests).
 - All existing tests preserved.
 
 ## [v1.2.0] - 2026-07-21
