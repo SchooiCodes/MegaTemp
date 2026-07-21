@@ -1,10 +1,45 @@
 """Functions related to the upload functionality."""
 
 import os
+import threading
+import time
 
 from mega import Mega
 
-from utilities.etc import Credentials, p_print, Colours
+from utilities.etc import Credentials, p_print, Colours, status_line, clear_status_line
+
+
+def _upload_with_progress(mega, file: str):
+	"""Wrapper around mega.upload that shows a progress spinner.
+
+	Mega's SDK does not expose a progress callback, so we run a
+	background thread that prints a rotating spinner while the upload
+	thread works.
+	"""
+	result = [None]
+	error = [None]
+
+	def _do_upload():
+		try:
+			result[0] = mega.upload(file)
+		except Exception as e:
+			error[0] = e
+
+	thread = threading.Thread(target=_do_upload, daemon=True)
+	thread.start()
+
+	spinner = iter(["|", "/", "-", "\\"])
+	while thread.is_alive():
+		status_line(
+			f"Uploading {os.path.basename(file)} {next(spinner)} ...", Colours.OKCYAN
+		)
+		time.sleep(0.25)
+
+	clear_status_line()
+
+	if error[0]:
+		raise error[0]
+	return result[0]
 
 
 def upload_file(public: bool, file: str, credentials: Credentials):
@@ -17,8 +52,12 @@ def upload_file(public: bool, file: str, credentials: Credentials):
 	mega = Mega()
 	try:
 		mega.login(credentials.email, credentials.password)
-		p_print("Uploading file... this might take a while.", Colours.OKGREEN)
-		uploaded_file = mega.upload(file)
+		file_size = os.path.getsize(file)
+		p_print(
+			f"Uploading {os.path.basename(file)} ({file_size / 1024 / 1024:.1f} MiB)...",
+			Colours.HEADER,
+		)
+		uploaded_file = _upload_with_progress(mega, file)
 	except Exception as e:
 		p_print(f"Upload failed: {e}", Colours.FAIL)
 		return
