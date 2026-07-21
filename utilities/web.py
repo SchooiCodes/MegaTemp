@@ -334,7 +334,7 @@ async def generate_mail() -> Credentials:
 	global _mailtm_domains
 
 	mail = pymailtm.MailTm()
-	max_retries = 10
+	max_retries = 5
 
 	if _mailtm_domains is None:
 		_step("[mail] fetching available domains ...", Colours.HEADER)
@@ -342,37 +342,28 @@ async def generate_mail() -> Credentials:
 	# Reuse cached domains on every attempt to save one HTTP call.
 	mail._get_domains_list = lambda: _mailtm_domains
 
-	consecutive_failures = 0
-	retry_delay = 3
-
 	for attempt in range(1, max_retries + 1):
 		try:
 			account = mail.get_account()
 			break
 		except CouldNotGetAccountException:
-			consecutive_failures += 1
 			_step(
 				f"[mail] generating mail.tm address (attempt {attempt}/{max_retries})...",
 				Colours.WARNING,
 			)
-			# After 3 consecutive failures the 60 s rate-limit window is
-			# likely active; wait it out instead of burning retries.
-			if consecutive_failures >= 3:
+			# /accounts endpoint rate-limits at 1 req/60 s per IP.
+			# Wait the full window before retrying.
+			if attempt < max_retries:
 				_step(
-					"[mail] rate-limited; waiting 60 s for the rate window to reset ...",
+					"[mail] rate limited; waiting 62 s for the window to reset ...",
 					Colours.WARNING,
 				)
-				await asyncio.sleep(60)
-				consecutive_failures = 0
-				continue
-			delay = min(retry_delay, 12) + random.uniform(0, 2)
-			retry_delay = min(retry_delay + 2, 12)
-			await asyncio.sleep(delay)
-	else:
-		raise CouldNotGetAccountException(
-			f"Could not create a mail.tm account after {max_retries} attempts "
-			"(mail.tm may be down or rate-limiting)."
-		)
+				await asyncio.sleep(62)
+			else:
+				raise CouldNotGetAccountException(
+					f"Could not create a mail.tm account after {max_retries} attempts "
+					"(mail.tm may be down or rate-limiting)."
+				)
 
 	credentials = Credentials()
 	credentials.email = account.address
