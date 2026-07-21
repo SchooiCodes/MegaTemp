@@ -265,6 +265,47 @@ def prompt_text(message, default=""):
 	return val
 
 
+def _path_completer(text, state):
+	"""Readline completer for file paths."""
+	import glob as _glob
+
+	matches = _glob.glob(text + "*") or [text]
+	matches.sort()
+	try:
+		return matches[state]
+	except IndexError:
+		return None
+
+
+def prompt_path(message, default="", must_exist=False):
+	"""Ask for a file path with Tab completion (releases raw mode)."""
+	sys.stdout.write("\x1b[2K")
+	msg = message + (f" [{default}]" if default else "")
+	sys.stdout.write(msg + ": ")
+	sys.stdout.flush()
+	try:
+		import readline as _rl
+
+		_rl.set_completer(_path_completer)
+		_rl.parse_and_bind("tab: complete")
+		_rl.set_completer_delims(" \t\n;")
+		val = input()
+	except ImportError:
+		# readline not available (Windows) — fall back to plain input
+		try:
+			val = input()
+		except EOFError:
+			val = ""
+	except EOFError:
+		val = ""
+	if val == "" and default != "":
+		val = default
+	if must_exist and val and not os.path.exists(os.path.expanduser(val)):
+		p_print(f"Path not found: {val}", Colours.FAIL)
+		return prompt_path(message, default, must_exist)
+	return val
+
+
 def prompt_int(message, default=1, minimum=1, maximum=100000):
 	"""Ask for an integer within a range."""
 	while True:

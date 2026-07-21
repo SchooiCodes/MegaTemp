@@ -76,6 +76,7 @@ from utilities.menu import (
 	prompt_text,
 	prompt_int,
 	prompt_yes_no,
+	prompt_path,
 	pause,
 )
 
@@ -1206,7 +1207,7 @@ def _action_upload_dir(_unused_executable_path, config):
 	"""Prompt for a directory, then upload all files inside (non-recursive)."""
 	import glob
 
-	path = os.path.expanduser(prompt_text("Path to directory to upload"))
+	path = os.path.expanduser(prompt_path("Path to directory to upload"))
 	if not os.path.isdir(path):
 		p_print(f"Directory not found: {path}", Colours.FAIL)
 		pause()
@@ -1229,7 +1230,9 @@ def _action_upload_dir(_unused_executable_path, config):
 def _action_upload(_unused_executable_path, config):
 	"""Prompt for a file and (optional) public link, then upload."""
 	while True:
-		path = os.path.expanduser(prompt_text("Path to file to upload"))
+		path = os.path.expanduser(
+			prompt_path("Path to file to upload", must_exist=True)
+		)
 		if path and os.path.exists(path):
 			break
 		p_print("File not found.", Colours.FAIL)
