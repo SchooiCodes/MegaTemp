@@ -104,8 +104,8 @@ async def initial_setup(context, message, credentials):
 	Opens the MEGA confirmation link, enters the account password to finish
 	creating the account, then dismisses the welcome/"free" screen.
 
-	MEGA's SPA selectors change over time, so we try several known selectors
-	and fall back to dumping the page DOM if nothing matches.
+	If MEGA has already confirmed the account (modern flow where the link
+	redirects directly to the file manager), we skip the password step.
 	"""
 	confirm_links = re.findall(
 		r'href="(https:\/\/mega\.nz\/#confirm[^ ][^"]*)', str(message)
@@ -121,7 +121,18 @@ async def initial_setup(context, message, credentials):
 
 	confirm_page = await context.newPage()
 	try:
-		await confirm_page.goto(confirm_link)
+		await confirm_page.goto(confirm_link, waitUntil="domcontentloaded")
+
+		# Modern MEGA flow: the link may redirect to /fm/ (file manager),
+		# meaning the account is already confirmed — no password needed.
+		current_url = confirm_page.url
+		if "confirm" not in current_url.lower() and "key" not in current_url.lower():
+			_step(
+				f"[confirm] already confirmed (redirected to {current_url})",
+				Colours.OKGREEN,
+			)
+			confirm_page.close()
+			return
 
 		password_selectors = ["#login-password2", "#confirm-password2", "#password"]
 		password_field = None
@@ -436,10 +447,13 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 				f"[mail] retry {attempt}/{max_retries} ({last_error})...",
 				Colours.WARNING,
 			)
-			# With unique addresses the hit rate is ~95 % on the first try,
-			# so a quick jittered backoff is all we need for the rare
-			# collision retry.
-			await asyncio.sleep(0.3 + (attempt % 5) * 0.25)
+			# HTTP 429 (rate limiting) needs exponential backoff.
+			# Other errors (address collisions) need only a short jittered wait.
+			if "429" in last_error or "Too Many" in last_error:
+				delay = min(2 ** (attempt - 1) + random.uniform(0, 1), 30)
+			else:
+				delay = 0.3 + (attempt % 5) * 0.25
+			await asyncio.sleep(delay)
 	else:
 		raise CouldNotGetAccountException(
 			f"Could not create a mail.tm account after {max_retries} attempts "

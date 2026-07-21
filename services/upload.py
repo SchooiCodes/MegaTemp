@@ -78,7 +78,8 @@ def upload_file(public: bool, file: str, credentials: Credentials):
 		)
 		uploaded_file = _upload_with_progress(mega, file)
 	except Exception as e:
-		p_print(f"Upload failed: {e}", Colours.FAIL)
+		msg = str(e) or "Unknown upload error"
+		p_print(f"Upload failed: {msg}", Colours.FAIL)
 		return
 
 	p_print("File uploaded successfully.", Colours.OKGREEN)

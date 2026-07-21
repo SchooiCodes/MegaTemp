@@ -12,7 +12,7 @@ from utilities.retry import retry
 def list_files(credentials: Credentials) -> list[dict]:
 	"""List all files in the MEGA account root (node 2).
 
-	Returns a list of dicts with keys: name, size, id.
+	Returns a list of dicts with keys: name, size, id, node (full node object).
 	"""
 	mega = Mega()
 	try:
@@ -37,6 +37,7 @@ def list_files(credentials: Credentials) -> list[dict]:
 					"id": fid,
 					"name": info.get("a", {}).get("n", "unknown"),
 					"size": info.get("s", 0),
+					"node": info,  # full node object needed by mega.download()
 				}
 			)
 	result.sort(key=lambda x: x["name"].lower())
@@ -44,9 +45,13 @@ def list_files(credentials: Credentials) -> list[dict]:
 
 
 def download_file(
-	credentials: Credentials, file_id: str, dest_dir: str = "."
+	credentials: Credentials, node: dict, dest_dir: str = "."
 ) -> str | None:
-	"""Download a file from MEGA by its node ID. Returns local path or None."""
+	"""Download a file from MEGA by its node dict. Returns local path or None.
+
+	``node`` must be the full node dict from ``mega.get_files_in_node()``
+	(including the ``a``, ``h``, ``k``, ``s``, ``i`` attributes).
+	"""
 	mega = Mega()
 	try:
 		mega.login(credentials.email, credentials.password)
@@ -56,7 +61,7 @@ def download_file(
 
 	try:
 		p_print(f"Downloading to {dest_dir} ...", Colours.HEADER)
-		local_path = mega.download(file_id, dest_path=dest_dir)
+		local_path = mega.download(node, dest_path=dest_dir)
 		p_print(f"Downloaded to {local_path}", Colours.OKGREEN)
 		return local_path
 	except Exception as e:
@@ -74,6 +79,8 @@ def _action_browse_cloud(_executable_path, _config):
 		pause()
 		return
 
+	# Use the most recently modified account instead of the first one.
+	creds_list.sort(key=lambda x: x[2], reverse=True)
 	_fname, creds, _mtime = creds_list[0]
 	p_print(f"Listing files for {creds.email} ...", Colours.HEADER)
 	files = list_files(creds)
@@ -100,5 +107,5 @@ def _action_browse_cloud(_executable_path, _config):
 		p_print(f"Directory not found: {dest}", Colours.FAIL)
 		pause()
 		return
-	download_file(creds, selected["id"], dest)
+	download_file(creds, selected["node"], dest)
 	pause()

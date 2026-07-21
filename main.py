@@ -1290,7 +1290,8 @@ def _action_upload_dir(_unused_executable_path, config):
 	"""Prompt for a directory, then upload all files inside (non-recursive)."""
 	import glob
 
-	path = os.path.expanduser(prompt_path("Path to directory to upload"))
+	raw = prompt_path("Path to directory to upload")
+	path = os.path.expanduser(raw.strip().strip("'\""))
 	if not os.path.isdir(path):
 		p_print(f"Directory not found: {path}", Colours.FAIL)
 		pause()
@@ -1312,10 +1313,16 @@ def _action_upload_dir(_unused_executable_path, config):
 
 def _action_upload(_unused_executable_path, config):
 	"""Prompt for a file and (optional) public link, then upload."""
+
+	def _clean_path(raw: str) -> str:
+		"""Strip surrounding quotes and expand ``~``."""
+		s = raw.strip()
+		if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+			s = s[1:-1]
+		return os.path.expanduser(s)
+
 	while True:
-		path = os.path.expanduser(
-			prompt_path("Path to file to upload", must_exist=True)
-		)
+		path = _clean_path(prompt_path("Path to file to upload"))
 		if path and os.path.exists(path):
 			break
 		p_print("File not found.", Colours.FAIL)
@@ -1464,7 +1471,12 @@ def _open_settings():
 def _sigint_handler(signum, frame):
 	"""Graceful Ctrl+C: don't dump a traceback, just exit cleanly."""
 	p_print("\nInterrupted. Exiting...", Colours.WARNING)
-	sys.exit(0)
+	# Use os._exit() instead of sys.exit() to bypass asyncio cleanup
+	# issues (e.g. "This event loop is already running") when pressed
+	# inside parallel / loop mode.
+	import os as _os
+
+	_os._exit(0)
 
 
 def _loop_keepalive(verbose: bool, prune: bool, interval_hours: float):
@@ -1517,19 +1529,31 @@ if __name__ == "__main__":
 
 		_action_browse_cloud(executable_path, config)
 	elif console_args.download_cloud:
-		from services.download import download_file
+		from services.download import download_file, list_files
 		from utilities.fs import list_credentials
 
 		creds_list = list_credentials()
 		if not creds_list:
 			p_print("No saved credentials.", Colours.FAIL)
 			sys.exit(1)
+		# Use the most recent account.
+		creds_list.sort(key=lambda x: x[2], reverse=True)
 		creds = creds_list[0][1]
 		dest = os.path.expanduser(console_args.download_dest)
 		if not os.path.isdir(dest):
 			p_print(f"Directory not found: {dest}", Colours.FAIL)
 			sys.exit(1)
-		download_file(creds, console_args.download_cloud, dest)
+		# Look up the file by node ID from the file listing.
+		file_id = console_args.download_cloud
+		all_files = list_files(creds)
+		match = next((f for f in all_files if str(f["id"]) == file_id), None)
+		if match is None:
+			p_print(
+				f"File not found: {file_id}. Use --list-cloud to see available IDs.",
+				Colours.FAIL,
+			)
+			sys.exit(1)
+		download_file(creds, match["node"], dest)
 	elif console_args.extract:
 		p_print("Extracting credentials to credentials.txt ...", Colours.HEADER)
 		extract_credentials(config.accountFormat)

@@ -765,7 +765,7 @@ class TestDownload:
 		from utilities.models import Credentials
 
 		creds = Credentials("nonexistent@test.test", "pw", "pw")
-		result = download_file(creds, "nonexistent-id", "/tmp")
+		result = download_file(creds, {"a": {"n": "test"}, "s": 0}, "/tmp")
 		assert result is None
 
 	def test_list_cloud_flag_no_creds(self):

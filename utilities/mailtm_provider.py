@@ -82,7 +82,13 @@ class MailTmProvider(EmailProvider):
 					f"[mail] retry {attempt}/{max_retries} ({last_error})...",
 					Colours.WARNING,
 				)
-				await asyncio.sleep(0.3 + (attempt % 5) * 0.25)
+				# HTTP 429 (rate limiting) — exponential backoff with jitter.
+				# Address collisions — short jittered wait is sufficient.
+				if "429" in last_error or "Too Many" in last_error:
+					delay = min(2 ** (attempt - 1) + random.uniform(0, 1), 30)
+				else:
+					delay = 0.3 + (attempt % 5) * 0.25
+				await asyncio.sleep(delay)
 		else:
 			raise CouldNotGetAccountException(
 				f"Could not create a mail.tm account after {max_retries} attempts "
