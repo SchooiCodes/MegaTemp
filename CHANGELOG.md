@@ -91,6 +91,17 @@ All notable changes to MegaTemp are documented here. This project adheres to
 - **Account picker for uploads** — both `Upload File` and `Upload Directory`
   now show a numbered list of saved accounts to choose from.
 
+### Added (post-v1.3.0-tag — tab completion & CLI)
+- **Tab completion for file paths** — `prompt_path()` in `menu.py` with
+  `readline`-based Tab completion; used in upload/download interactive prompts.
+- **`--version` flag** — displays `MegaTemp v1.3.0` and exits immediately
+  (no setup required).
+- **`--provider NAME` CLI flag** — selects email provider (`mailtm` or
+  `guerrillamail`) from headless/scripted invocations; threaded through
+  `register()`, `loop_registrations()`, and `parallel_registrations()`.
+- **`docker-compose.yml`** — one-command Docker Compose setup with volume
+  mounts for credential persistence and TTY allocation for interactive mode.
+
 ### Added (post-v1.3.0-tag — packaging)
 - **Dockerfile** — `python:3.12-slim` with Chromium + MegaTemp.
 - **pre-commit hook** — `.githooks/pre-commit` runs `ruff check` + `ruff format`.
@@ -108,6 +119,9 @@ All notable changes to MegaTemp are documented here. This project adheres to
 ### Tests
 - 74 tests (was 68) — added download module tests (list_files, download_file
   error handling, separator, --list-cloud, --download-cloud CLI tests).
+- 91 tests (was 84) — added config validation, edge case, and menu tests.
+- 94 tests (was 91) — added prompt_path, prompt_text lifecycle tests, version
+  flag test coverage.
 - All existing tests preserved.
 
 ## [v1.2.0] - 2026-07-21

@@ -97,6 +97,8 @@ overwriting it.
 | | `--list-cloud` | List files in the most recent MEGA account |
 | | `--download-cloud ID` | Download a cloud file by its node ID |
 | | `--download-dest DIR` | Destination for `--download-cloud` (default `.`) |
+| | `--version` | Show version (`MegaTemp v1.3.0`) and exit |
+| | `--provider NAME` | Email provider: `mailtm` (default) or `guerrillamail` |
 
 ## Examples
 
@@ -112,6 +114,8 @@ python main.py -l 20 --resume           # resume interrupted batch
 python main.py --list-cloud             # list cloud files
 python main.py --download-cloud FILE_ID --download-dest ./downloads  # download
 python main.py -ka --interval 24        # keep alive every 24 hours
+python main.py --provider guerrillamail # use Guerrilla Mail provider
+python main.py --version                # show version
 ```
 
 > [!WARNING]
