@@ -11,6 +11,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -50,3 +53,30 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.binary }}
           if-no-files-found: error
+      - name: Upload to Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Only the first parallel job creates the release; subsequent jobs
+          # will see it already exists and skip creation.
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes 2>/dev/null || true
+          gh release upload "${{ github.ref_name }}" \
+            "${{ matrix.binary }}" --clobber
+      - name: Upload source tarball (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar --exclude-vcs \
+            --exclude='venv' --exclude='.venv' \
+            --exclude='credentials' --exclude='credentials.txt' \
+            --exclude='tmp' --exclude='diagtmp' \
+            --exclude='__pycache__' --exclude='*.pyc' \
+            --exclude='.ruff_cache' --exclude='.mypy_cache' \
+            --exclude='.idea' \
+            -czf "dist/MegaTemp-${GITHUB_REF_NAME}-src.tar.gz" .
+          gh release upload "${GITHUB_REF_NAME}" \
+            "dist/MegaTemp-${GITHUB_REF_NAME}-src.tar.gz" --clobber
