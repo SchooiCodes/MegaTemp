@@ -68,6 +68,7 @@ from utilities.etc import (
 	elapsed,
 	VERSION,
 	notify,
+	capture_worker_output,
 )
 from utilities.menu import (
 	Menu,
@@ -113,6 +114,28 @@ def _quiet_async_exceptions(loop, context):
 	if any(marker in text for marker in _HARMLESS_ASYNC_ERRORS):
 		return
 	loop.default_exception_handler(context)
+
+
+def _cleanup_pyppeteer(browser):
+	"""Restore our SIGINT handler and kill the Chrome subprocess.
+
+	pyppeteer replaces the SIGINT handler with its own ``_close_process``,
+	which crashes with "Event loop is closed" when we later catch Ctrl+C
+	in the TUI via ``input()``.  Call this after ``await browser.close()``.
+	"""
+	import signal as _signal
+
+	# 1. Restore our SIGINT handler that pyppeteer overwrote.
+	_signal.signal(_signal.SIGINT, _sigint_handler)
+
+	# 2. Kill the actual Chrome subprocess so pyppeteer's atexit
+	#    (which still runs) has nothing to do.
+	try:
+		proc = getattr(browser, "_process", None)
+		if proc is not None:
+			proc.kill()
+	except Exception:
+		pass
 
 
 default_installs = [
@@ -529,29 +552,39 @@ def parallel_registrations(
 	start = time.monotonic()
 	_lock = asyncio.Lock()
 
-	async def _worker(sem: asyncio.Semaphore, worker_id: int, proxy: str | None = None):
+	async def _worker(worker_id: int, proxy: str | None = None):
 		nonlocal successes, failures
 		p_print(
 			f"Worker {worker_id} starting{' with proxy' if proxy else ''}...",
 			Colours.OKCYAN,
 		)
-		browser = await pyppeteer.launch(
-			{
-				"headless": not visible,
-				"ignoreHTTPSErrors": True,
-				"userDataDir": f"{os.getcwd()}/tmp_{worker_id}",
-				"args": _build_browser_args(proxy_override=proxy),
-				"executablePath": executable_path,
-				"autoClose": False,
-				"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
-			}
-		)
+
+		_browser_kwargs = {
+			"headless": not visible,
+			"ignoreHTTPSErrors": True,
+			"userDataDir": f"{os.getcwd()}/tmp_{worker_id}",
+			"args": _build_browser_args(proxy_override=proxy),
+			"executablePath": executable_path,
+			"autoClose": False,
+			"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
+		}
+		browser = await pyppeteer.launch(_browser_kwargs)
+
 		try:
 			while True:
-				async with sem:
-					async with _lock:
-						if successes + failures >= loop_count:
-							return
+				# Atomically claim a slot so two workers never both
+				# see "room for one more" and over-create.
+				async with _lock:
+					if successes + failures >= loop_count:
+						return
+					# Optimistic claim — we will increment successes
+					# or failures after the work finishes.
+					successes += 1
+
+				# Buffer all p_print/separator output from register()
+				# and flush it atomically so multiple workers never
+				# interleave their output.
+				with capture_worker_output() as buf:
 					try:
 						await register(
 							None,
@@ -563,21 +596,33 @@ def parallel_registrations(
 							provider_name=provider_name,
 							_browser=browser,
 						)
-						async with _lock:
-							successes += 1
+						# already counted as success above
 					except SystemExit as e:
 						async with _lock:
-							if e.code is None or e.code == 0:
-								successes += 1
-							else:
+							if not (e.code is None or e.code == 0):
+								# Undo optimistic claim, count as failure
+								successes -= 1
 								failures += 1
 					except Exception as exc:
-						p_print(
-							f"Worker {worker_id} error: {exc}",
-							Colours.FAIL,
-						)
+						buf.append((f"Worker {worker_id} error: {exc}", Colours.FAIL))
 						async with _lock:
+							# Undo optimistic claim, count as failure
+							successes -= 1
 							failures += 1
+						# The browser may be in a bad state (Chrome
+						# crashed, context leaked, etc).  Replace it so
+						# the next iteration doesn't fail instantly.
+						try:
+							await browser.close()
+						except Exception:
+							pass
+						browser = await pyppeteer.launch(_browser_kwargs)
+
+				# Flush the captured output under the lock so it
+				# appears as one contiguous block per registration.
+				async with _lock:
+					for text, colour in buf:
+						p_print(text, colour)
 		finally:
 			try:
 				await browser.close()
@@ -585,9 +630,8 @@ def parallel_registrations(
 				pass
 
 	async def _run_all():
-		sem = asyncio.Semaphore(parallelism)
 		proxies = _proxy_manager.distribute(parallelism)
-		tasks = [_worker(sem, i, proxy=proxies[i]) for i in range(parallelism)]
+		tasks = [_worker(i, proxy=proxies[i]) for i in range(parallelism)]
 		await asyncio.gather(*tasks)
 
 	asyncio.run(_run_all())
@@ -730,6 +774,10 @@ async def register(
 		if own_browser:
 			try:
 				await browser.close()
+				# Suppress pyppeteer's atexit handler to avoid
+				# "Event loop is closed" crash when the TUI calls input()
+				# later (the atexit tries to killChrome() on a dead loop).
+				_cleanup_pyppeteer(browser)
 			except Exception:
 				pass
 
@@ -1142,7 +1190,7 @@ def _action_storage(config, json_output=False):
 		try:
 			mega = Mega()
 			mega.login(creds.email, creds.password)
-			quota = mega.get_quota() / (1024**3)
+			quota = mega.get_quota() / 1024  # get_quota() returns MB → convert to GB
 			entry["status"] = "alive"
 			entry["quota_gb"] = round(quota, 2)
 			if json_output:
@@ -1250,20 +1298,20 @@ def _action_edit_config(_unused_executable_path, config):
 
 	p_print("Editing configuration. Leave blank to keep current value.", Colours.HEADER)
 	path = prompt_text(
-		f"Browser executable path [{cfg.executablePath or '(auto-detect)'}]",
-		default=cfg.executablePath,
+		"Browser executable path",
+		default=cfg.executablePath or "(auto-detect)",
 	)
 	if path:
 		write_config("executablePath", path, cfg)
 	fmt = prompt_text(
-		f"Account format [{cfg.accountFormat or '(JSON per account)'}]",
-		default=cfg.accountFormat,
+		"Account format",
+		default=cfg.accountFormat or "(JSON per account)",
 	)
 	if fmt is not None:
 		merge_config({"accountFormat": fmt})
 	proxy = prompt_text(
-		f"Proxy URL [{cfg.proxy or '(none)'}]",
-		default=cfg.proxy,
+		"Proxy URL",
+		default=cfg.proxy or "(none)",
 	)
 	if proxy is not None:
 		merge_config({"proxy": proxy})
@@ -1271,22 +1319,65 @@ def _action_edit_config(_unused_executable_path, config):
 	pause("Press Enter to return to the menu...")
 
 
-def _pick_credentials() -> Credentials | None:
-	"""Show a numbered list of saved accounts and let the user pick one."""
+def _pick_credentials(
+	executable_path: str = "", config: Config | None = None
+) -> Credentials | None:
+	"""Show a numbered list of saved accounts and let the user pick one.
+
+	When *config* is given, an extra option 0 is shown so the user can
+	create a brand-new account on the spot and then upload to it.
+	"""
 	from utilities.fs import list_credentials
 
 	creds_list = list_credentials()
-	if not creds_list:
+	can_create = bool(executable_path and config)
+
+	if not creds_list and not can_create:
 		p_print("No saved credentials.", Colours.WARNING)
 		return None
+
 	separator("Select account", Colours.HEADER)
+	if can_create:
+		p_print("   0. Create a new account", Colours.OKGREEN)
 	for idx, (_fname, creds, _) in enumerate(creds_list, start=1):
-		p_print(f"  {idx}. {creds.email}", Colours.OKCYAN)
-	choice = prompt_int("Account number", 1, 1, len(creds_list))
+		p_print(f"  {idx:>3}. {creds.email}", Colours.OKCYAN)
+	go_back_idx = len(creds_list) + 1
+	p_print(f"  {go_back_idx:>3}. Go back", Colours.WARNING)
+
+	minimum = 0 if can_create else 1
+	default = 0 if can_create else 1
+	choice = prompt_int("Account number", default, minimum, go_back_idx)
+
+	if can_create and choice == 0:
+		p_print("Creating a new account...", Colours.HEADER)
+		try:
+			asyncio.run(
+				register(
+					None,
+					executable_path,
+					config,
+					visible=_SETTINGS["visible"],
+					max_attempts=_SETTINGS["attempts"],
+					export_csv=_SETTINGS["export_csv"],
+				)
+			)
+		except SystemExit:
+			pass
+		# Re-read — register() saved the new account to disk.
+		creds_list = list_credentials()
+		if creds_list:
+			creds_list.sort(key=lambda x: x[2], reverse=True)
+			return creds_list[0][1]
+		p_print("Account creation did not produce credentials.", Colours.FAIL)
+		return None
+
+	if choice == go_back_idx:
+		return None
+
 	return creds_list[choice - 1][1]
 
 
-def _action_upload_dir(_unused_executable_path, config):
+def _action_upload_dir(executable_path, config):
 	"""Prompt for a directory, then upload all files inside (non-recursive)."""
 	import glob
 
@@ -1303,7 +1394,7 @@ def _action_upload_dir(_unused_executable_path, config):
 		return
 	public = prompt_yes_no("Generate public share links?")
 	p_print(f"Uploading {len(files)} file(s) from {path}...", Colours.HEADER)
-	creds = _pick_credentials()
+	creds = _pick_credentials(executable_path, config)
 	if creds is None:
 		return
 	for f in files:
@@ -1311,7 +1402,7 @@ def _action_upload_dir(_unused_executable_path, config):
 	pause("Press Enter to return to the menu...")
 
 
-def _action_upload(_unused_executable_path, config):
+def _action_upload(executable_path, config):
 	"""Prompt for a file and (optional) public link, then upload."""
 
 	def _clean_path(raw: str) -> str:
@@ -1329,7 +1420,7 @@ def _action_upload(_unused_executable_path, config):
 		if not prompt_yes_no("Try a different path?"):
 			return
 	public = prompt_yes_no("Generate a public share link?")
-	creds = _pick_credentials()
+	creds = _pick_credentials(executable_path, config)
 	if creds is None:
 		return
 	upload_file(public, path, creds)

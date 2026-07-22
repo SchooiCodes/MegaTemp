@@ -116,7 +116,7 @@ async def initial_setup(context, message, credentials):
 	# Email bodies are HTML-escaped, so '&' becomes '&amp;' and the link is
 	# unusable until we decode it back.
 	confirm_link = html.unescape(confirm_links[0])
-	_step("[confirm] opening confirmation link ...", Colours.HEADER)
+	_log("[confirm] opening confirmation link ...", Colours.HEADER)
 	_log(f"[confirm] link: {confirm_link}")
 
 	confirm_page = await context.newPage()
@@ -145,20 +145,15 @@ async def initial_setup(context, message, credentials):
 				continue
 
 		if password_field is None:
-			dom = await confirm_page.content()
-			p_print(
-				"Could not find a password field on the confirm page. Dumping DOM.",
-				Colours.WARNING,
-			)
-			p_print(dom[:2000], Colours.WARNING)
+			_step("[confirm] confirm page: no password field found", Colours.WARNING)
 			raise RuntimeError("Confirm page password field not found.")
 
-		_step(f"[confirm] typing password into {password_field} ...", Colours.HEADER)
+		_log(f"[confirm] typing password into {password_field} ...", Colours.HEADER)
 		await _robust_type(confirm_page, password_field, credentials.password)
 
 		# The confirm page's submit button has the text "Confirm". Click the
 		# visible one specifically (the login template also has a .login-button).
-		_step("[confirm] clicking 'Confirm' ...", Colours.HEADER)
+		_log("[confirm] clicking 'Confirm' ...", Colours.HEADER)
 		clicked = await confirm_page.evaluate(
 			"""() => {
 				const btns = Array.from(document.querySelectorAll('button'));
@@ -185,7 +180,7 @@ async def initial_setup(context, message, credentials):
 		# recovery-key / 2FA screen, "#key") or for an error to surface. If we
 		# stay on the confirm page, the password did not match -> raise so the
 		# caller retries with a fresh email instead of saving dead credentials.
-		_step("[confirm] waiting for account creation ...", Colours.HEADER)
+		_log("[confirm] waiting for account creation ...", Colours.HEADER)
 		try:
 			await confirm_page.waitForFunction(
 				"() => !location.href.includes('confirm')",
@@ -203,7 +198,7 @@ async def initial_setup(context, message, credentials):
 				f"Visible errors: {errors}"
 			) from None
 
-		_step(
+		_log(
 			f"[confirm] account created (final URL: {confirm_page.url})",
 			Colours.OKGREEN,
 		)
@@ -214,7 +209,7 @@ async def initial_setup(context, message, credentials):
 			await confirm_page.waitForSelector(
 				".dialog-download-recovery-key", timeout=5000
 			)
-			_step("[confirm] dismissing recovery-key prompt ...", Colours.HEADER)
+			_log("[confirm] dismissing recovery-key prompt ...", Colours.HEADER)
 			await confirm_page.evaluate(
 				"""() => {
 					const b = Array.from(document.querySelectorAll('button')).find(
@@ -260,13 +255,13 @@ async def mail_login(credentials: Credentials, provider_name: str = "mailtm"):
 			mail = pymailtm.Account(
 				credentials.id, credentials.email, credentials.emailPassword
 			)
-			_step(f"[mail] logged into mailbox {credentials.email}", Colours.OKGREEN)
+			_log(f"[mail] logged into mailbox {credentials.email}", Colours.OKGREEN)
 			# Cache for next retry.
 			_last_mail_account = mail
 			_last_mail_password = credentials.emailPassword
 			return mail
 		except CouldNotGetAccountException:
-			p_print(
+			_log(
 				f"[mail] login failed, retrying ({attempt}/{max_retries})...",
 				Colours.WARNING,
 			)
@@ -288,7 +283,7 @@ async def get_mail(mail, max_attempts: int = 120):
 	"""
 	# If the mailbox has a provider attribute, it's from the ABC.
 	if hasattr(mail, "provider"):
-		_step("[mail] polling for confirmation email ...", Colours.HEADER)
+		_log("[mail] polling for confirmation email ...", Colours.HEADER)
 		from utilities.provider import get_provider
 
 		prov = get_provider(mail.provider)
@@ -304,7 +299,7 @@ async def get_mail(mail, max_attempts: int = 120):
 	# --- mail.tm specific ---
 	from pymailtm.pymailtm import CouldNotGetMessagesException
 
-	_step("[mail] polling for MEGA's confirmation email ...", Colours.HEADER)
+	_log("[mail] polling for MEGA's confirmation email ...", Colours.HEADER)
 	for attempt in range(1, max_attempts + 1):
 		try:
 			message = mail.get_messages()[0]
@@ -355,7 +350,7 @@ async def type_name(page: pyppeteer.page.Page, credentials: Credentials):
 	# character, so type it robustly and verify before submitting.
 	await _robust_type(page, "#register-email", credentials.email)
 	_log(f"[register] typed email: {credentials.email}")
-	_step("[register] name + email filled in.", Colours.OKBLUE)
+	_log("[register] name + email filled in.", Colours.OKBLUE)
 
 
 async def finish_form(page: pyppeteer.page.Page, credentials: Credentials):
@@ -420,7 +415,7 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 
 	# Fetch and cache the domain list across retries (it never changes).
 	if _mailtm_domains is None:
-		_step("[mail] fetching available domains ...", Colours.HEADER)
+		_log("[mail] fetching available domains ...", Colours.HEADER)
 		try:
 			_mailtm_domains = mail._get_domains_list()
 		except Exception as e:
@@ -443,7 +438,7 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 			break
 		except CouldNotGetAccountException as e:
 			last_error = str(e)
-			_step(
+			_log(
 				f"[mail] retry {attempt}/{max_retries} ({last_error})...",
 				Colours.WARNING,
 			)

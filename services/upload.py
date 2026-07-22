@@ -10,20 +10,39 @@ from utilities.etc import Credentials, p_print, Colours, status_line, clear_stat
 from utilities.retry import retry
 
 
-def _upload_with_progress(mega, file: str):
-	"""Wrapper around mega.upload showing animated progress.
+def _format_speed(bytes_per_sec: float) -> str:
+	if bytes_per_sec >= 1_000_000:
+		return f"{bytes_per_sec / 1_000_000:.1f} MB/s"
+	if bytes_per_sec >= 1_000:
+		return f"{bytes_per_sec / 1_000:.0f} KB/s"
+	return f"{bytes_per_sec:.0f} B/s"
 
-	Since the MEGA SDK doesn't expose a progress callback, we run a
-	background thread and show elapsed time + file size.  We also poll
-	the file's current size on disk to infer upload progress.
-	"""
+
+def _format_eta(seconds: float) -> str:
+	if seconds <= 0:
+		return "—"
+	if seconds < 60:
+		return f"{seconds:.0f}s"
+	m = int(seconds // 60)
+	s = int(seconds % 60)
+	return f"{m}m {s:02d}s"
+
+
+def _upload_with_progress(mega, file: str):
+	"""Wrapper around mega.upload showing real-time progress with speed & ETA."""
 	result = [None]
 	error = [None]
 	total = os.path.getsize(file)
+	progress = [0]  # shared state: bytes uploaded (updated via callback)
+
+	def _progress(bytes_up, _total):
+		progress[0] = bytes_up
 
 	def _do_upload():
 		try:
-			result[0] = mega.upload(file)
+			result[0] = retry(label="mega.upload", max_attempts=2)(mega.upload)(
+				file, progress_callback=_progress
+			)
 		except Exception as e:
 			error[0] = e
 
@@ -31,31 +50,44 @@ def _upload_with_progress(mega, file: str):
 	thread.start()
 
 	start = time.time()
-	spinner = iter(["|", "/", "-", "\\"])
+	timeout = max(total // 50000, 30)  # at least 30s, scales with file size
 
 	while thread.is_alive():
 		elapsed = time.time() - start
-		spinner_char = next(spinner)
-		# Estimate progress: check the file's current uploaded chunk
-		# (mega.py writes to a temp file, so we can't get true progress)
-		bar_len = 20
-		filled = min(int(elapsed / max(total / 50000, 1)), bar_len)
-		bar = "█" * filled + "░" * (bar_len - filled)
-		pct = min(int(elapsed / max(total / 50000, 1)) * 5, 99)
+		if elapsed > timeout:
+			error[0] = TimeoutError(
+				f"Upload timed out after {int(elapsed)}s ({total // 1024 // 1024} MiB)"
+			)
+			break
 
-		# Show size/elapsed info
-		mb = total / 1024 / 1024
+		bytes_up = progress[0]
+		speed = bytes_up / elapsed if elapsed > 0 and bytes_up > 0 else 0
+		pct = bytes_up / total * 100 if total > 0 else 0
+		remaining = (total - bytes_up) / speed if speed > 0 else 0
+
+		bar_len = 20
+		filled = int(pct / 100 * bar_len)
+		bar = "█" * filled + "░" * (bar_len - filled)
+
+		mb_total = total / 1024 / 1024
+		speed_str = _format_speed(speed)
+		eta_str = _format_eta(remaining) if bytes_up > 0 else "starting..."
 		status_line(
-			f"Uploading {os.path.basename(file)} {spinner_char} "
-			f"[{bar}] {pct}% ({mb:.1f} MiB, {elapsed:.0f}s)",
+			f"Uploading {os.path.basename(file)} [{bar}] {pct:.0f}% "
+			f"({mb_total:.1f} MiB @ {speed_str}, ETA {eta_str})",
 			Colours.OKCYAN,
 		)
 		time.sleep(0.25)
 
 	clear_status_line()
 
+	thread.join(timeout=5)
 	if error[0]:
 		raise error[0]
+	if result[0] is None:
+		raise RuntimeError(
+			"mega.upload() returned None — the account may have 0 GB quota"
+		)
 	return result[0]
 
 
@@ -78,8 +110,9 @@ def upload_file(public: bool, file: str, credentials: Credentials):
 		)
 		uploaded_file = _upload_with_progress(mega, file)
 	except Exception as e:
+		exc_name = type(e).__name__
 		msg = str(e) or "Unknown upload error"
-		p_print(f"Upload failed: {msg}", Colours.FAIL)
+		p_print(f"Upload failed [{exc_name}]: {msg}", Colours.FAIL)
 		return
 
 	p_print("File uploaded successfully.", Colours.OKGREEN)

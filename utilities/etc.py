@@ -10,6 +10,8 @@ from urllib.request import urlopen, Request
 import sys
 from mega import Mega
 import psutil
+import contextvars
+from contextlib import contextmanager
 
 from utilities.models import Colours, Credentials
 
@@ -353,12 +355,63 @@ def kill_process(matches: list):
 		p_print("No matching processes to kill.", Colours.OKCYAN)
 
 
+# ── Per-task print buffering ──────────────────────────────────────────
+# When set, p_print() / separator() capture output into this list
+# instead of printing immediately.  Workers flush atomically so
+# parallel output doesn't interleave.
+_print_buffer: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+	"_print_buffer", default=None
+)
+
+
+def _capture_or_print(text: str, colour: str) -> None:
+	"""Write *text* to the per-task buffer, or print directly."""
+	buf = _print_buffer.get()
+	if buf is not None:
+		buf.append((text, colour))
+	else:
+		print(colour + text + Colours.ENDC)
+
+
+def flush_print_buffer() -> list[tuple[str, str]] | None:
+	"""Flush and return the captured lines (caller prints them)."""
+	buf = _print_buffer.get()
+	if buf is not None:
+		lines = buf[:]
+		buf.clear()
+		return lines
+	return None
+
+
+@contextmanager
+def capture_worker_output() -> list:
+	"""Context manager: capture ``p_print``/``separator`` calls into a list.
+
+	The captured list is yielded so the caller can flush it atomically::
+
+	    with capture_worker_output() as buf:
+	        do_work()
+	    # buf contains [(text, colour), ...]
+	    for text, colour in buf:
+	        print(colour + text + Colours.ENDC)
+	"""
+	buf: list[tuple[str, str]] = []
+	token = _print_buffer.set(buf)
+	try:
+		yield buf
+	finally:
+		_print_buffer.reset(token)
+
+
+# ── Print ─────────────────────────────────────────────────────────────
+
+
 def p_print(
 	text,
 	colour,
 ):
-	"""Prints text in colour."""
-	print(colour + text + Colours.ENDC)
+	"""Prints text in colour, or buffers it under a PrintCollector."""
+	_capture_or_print(text, colour)
 
 
 def clear_console():
@@ -380,7 +433,7 @@ def separator(title: str = "", colour: str = Colours.HEADER, width: int = 60):
 		line = ("─" * left) + title + ("─" * right)
 	else:
 		line = "─" * width
-	print(colour + line + Colours.ENDC)
+	_capture_or_print(line, colour)
 
 
 def status_line(text: str, colour: str = Colours.OKCYAN):

@@ -59,7 +59,7 @@ def keepalive(verbose: bool, prune: bool = False, max_retries: int = 3):
 		for attempt in range(1, max_retries + 1):
 			try:
 				mega.login(email, password)
-				quota_left = mega.get_quota() / (1024**3)
+				quota_left = mega.get_quota() / 1024  # get_quota() returns MB → GB
 				quota_gb = quota_left
 				status = "OK"
 				break

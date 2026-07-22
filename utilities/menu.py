@@ -326,7 +326,7 @@ def prompt_int(message, default=1, minimum=1, maximum=100000):
 
 def prompt_yes_no(message, default_no=True):
 	"""Yes/No prompt returning a bool."""
-	suffix = " [y/N]: " if default_no else " [Y/n]: "
+	suffix = " [y/N]" if default_no else " [Y/n]"
 	while True:
 		raw = prompt_text(message + suffix).strip().lower()
 		if raw == "":
@@ -340,4 +340,9 @@ def prompt_yes_no(message, default_no=True):
 
 def pause(message="Press Enter to return to the menu..."):
 	"""Pause with a message, releasing raw mode for input()."""
-	prompt_text(message)
+	sys.stdout.write("\x1b[2K" + message)
+	sys.stdout.flush()
+	try:
+		input()
+	except EOFError:
+		pass

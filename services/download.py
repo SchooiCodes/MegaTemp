@@ -37,7 +37,10 @@ def list_files(credentials: Credentials) -> list[dict]:
 					"id": fid,
 					"name": info.get("a", {}).get("n", "unknown"),
 					"size": info.get("s", 0),
-					"node": info,  # full node object needed by mega.download()
+					"node": (
+						fid,
+						info,
+					),  # tuple (node_id, node_info) for mega.download()
 				}
 			)
 	result.sort(key=lambda x: x["name"].lower())
@@ -70,7 +73,7 @@ def download_file(
 
 
 def _action_browse_cloud(_executable_path, _config):
-	"""TUI action: list files in the most recent account, offer download."""
+	"""TUI action: list files in a chosen account, offer download."""
 	from utilities.fs import list_credentials
 
 	creds_list = list_credentials()
@@ -79,9 +82,19 @@ def _action_browse_cloud(_executable_path, _config):
 		pause()
 		return
 
-	# Use the most recently modified account instead of the first one.
-	creds_list.sort(key=lambda x: x[2], reverse=True)
-	_fname, creds, _mtime = creds_list[0]
+	# Let the user pick which account to browse.
+	from utilities.menu import prompt_int as _prompt_int
+
+	separator("Select account to browse", Colours.HEADER)
+	for idx, (_fname, c, _mtime) in enumerate(creds_list, start=1):
+		tag = f" [{c.tags}]" if c.tags else ""
+		p_print(f"  {idx:>3}. {c.email}{tag}", Colours.OKCYAN)
+	go_back_idx = len(creds_list) + 1
+	p_print(f"  {go_back_idx:>3}. Go back", Colours.WARNING)
+	choice = _prompt_int("Account", 1, 1, go_back_idx)
+	if choice == go_back_idx:
+		return
+	_fname, creds, _mtime = creds_list[choice - 1]
 	p_print(f"Listing files for {creds.email} ...", Colours.HEADER)
 	files = list_files(creds)
 	if not files:
