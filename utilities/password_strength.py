@@ -1,7 +1,33 @@
-"""Password strength estimation (entropy-based)."""
+"""Password strength estimation (entropy-based) and generation."""
 
 import math
 import re
+import secrets
+import string
+
+
+def generate_password(length: int = 20, min_special: int = 2, min_digits: int = 3) -> str:
+	"""Generate a cryptographically random password with guaranteed complexity."""
+	if length < 8:
+		length = 8
+	lower = string.ascii_lowercase
+	upper = string.ascii_uppercase
+	digits = string.digits
+	special = "!@#$%^&*()-_=+[]{}|;:,.<>?/~"
+
+	pool = lower + upper + digits + special
+	required = (
+		[secrets.choice(lower)]
+		+ [secrets.choice(upper)]
+		+ [secrets.choice(digits) for _ in range(min_digits)]
+		+ [secrets.choice(special) for _ in range(min_special)]
+	)
+	remain = length - len(required)
+	if remain > 0:
+		for _ in range(remain):
+			required.append(secrets.choice(pool))
+	secrets.SystemRandom().shuffle(required)
+	return "".join(required)
 
 
 def estimate_entropy(password: str) -> float:

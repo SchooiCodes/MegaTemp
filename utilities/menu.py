@@ -79,7 +79,7 @@ class MenuItem:
 		# be a string or a callable returning a string (so it stays live).
 		self.value = value
 
-	def get_value(self):
+	def get_value(self) -> str:
 		if callable(self.value):
 			try:
 				return str(self.value())
@@ -217,7 +217,7 @@ class Menu:
 		self._drawn_lines = len(lines)
 		self._full_redraw = False
 
-	def run(self):
+	def run(self) -> object | None:
 		"""Run the menu loop; returns the selected callback's result."""
 		self._full_redraw = True
 		while True:
@@ -238,10 +238,12 @@ class Menu:
 				item = self.items[self.selected]
 				if item.callback is None:
 					continue
-				result = item.callback()
-				# Any action prints logs then returns here; force a clean
-				# full repaint of the menu on the next loop iteration.
-				self._full_redraw = True
+				try:
+					result = item.callback()
+				finally:
+					# Always force a full repaint on the next loop iteration,
+					# even if the callback raised an exception.
+					self._full_redraw = True
 				if result is _BACK:
 					return _BACK
 			elif key in ("q", "Q", ESCAPE):
@@ -250,7 +252,7 @@ class Menu:
 				return _BACK
 
 
-def prompt_text(message, default=""):
+def prompt_text(message: str, default: str = "") -> str:
 	"""Ask the user for a line of text (releases raw mode first)."""
 	sys.stdout.write("\x1b[2K")
 	msg = message + (f" [{default}]" if default else "")
@@ -277,7 +279,7 @@ def _path_completer(text, state):
 		return None
 
 
-def prompt_path(message, default="", must_exist=False):
+def prompt_path(message: str, default: str = "", must_exist: bool = False) -> str:
 	"""Ask for a file path with Tab completion (releases raw mode)."""
 	sys.stdout.write("\x1b[2K")
 	msg = message + (f" [{default}]" if default else "")
@@ -306,7 +308,7 @@ def prompt_path(message, default="", must_exist=False):
 	return val
 
 
-def prompt_int(message, default=1, minimum=1, maximum=100000):
+def prompt_int(message: str, default: int = 1, minimum: int = 1, maximum: int = 100000) -> int:
 	"""Ask for an integer within a range."""
 	while True:
 		raw = prompt_text(message, str(default))
@@ -324,7 +326,7 @@ def prompt_int(message, default=1, minimum=1, maximum=100000):
 		return val
 
 
-def prompt_yes_no(message, default_no=True):
+def prompt_yes_no(message: str, default_no: bool = True) -> bool:
 	"""Yes/No prompt returning a bool."""
 	suffix = " [y/N]" if default_no else " [Y/n]"
 	while True:
@@ -338,7 +340,7 @@ def prompt_yes_no(message, default_no=True):
 		p_print("Please answer y or n.", Colours.WARNING)
 
 
-def pause(message="Press Enter to return to the menu..."):
+def pause(message: str = "Press Enter to return to the menu...") -> None:
 	"""Pause with a message, releasing raw mode for input()."""
 	sys.stdout.write("\x1b[2K" + message)
 	sys.stdout.flush()

@@ -5,10 +5,11 @@ import re
 import string
 import random
 import html
+import requests
 import pymailtm
 from faker import Faker
 
-from pymailtm.pymailtm import CouldNotGetAccountException
+from pymailtm.pymailtm import CouldNotGetAccountException, CouldNotGetMessagesException
 import pyppeteer
 import pyppeteer.page
 
@@ -23,6 +24,16 @@ from utilities.etc import (
 # Module-level verbosity flag, toggled from main.py via set_verbose().
 _VERBOSE = False
 
+# Lazily loaded provider ABC (avoids circular import at module level).
+_provider_getter = None
+
+
+def _get_provider(name: str) -> "EmailProvider":
+	global _provider_getter
+	if _provider_getter is None:
+		from utilities.provider import get_provider as _provider_getter
+	return _provider_getter(name)
+
 
 def set_verbose(value: bool) -> None:
 	"""Enable/disable verbose logging across web utilities."""
@@ -30,12 +41,12 @@ def set_verbose(value: bool) -> None:
 	_VERBOSE = value
 
 
-def _step(text, colour=Colours.HEADER):
+def _step(text: str, colour: str = Colours.HEADER) -> None:
 	"""Always-on phase marker so the user can follow the flow."""
 	p_print(text, colour)
 
 
-def _log(text, colour=Colours.OKCYAN):
+def _log(text: str, colour: str = Colours.OKCYAN) -> None:
 	"""Verbose-only detail line (only shown with -v)."""
 	if _VERBOSE:
 		p_print(text, colour)
@@ -53,9 +64,9 @@ async def _robust_type(page, selector: str, text: str):
 	The selector is passed to page.evaluate as an argument (not interpolated
 	into the JS string) so that any quoting in a selector cannot break it.
 	"""
-	await page.waitForSelector(selector)
+	await page.waitForSelector(selector, timeout=8000)
 	await page.focus(selector)
-	await asyncio.sleep(0.1)
+	await asyncio.sleep(0.08)
 	await page.keyboard.type("x", delay=10)
 	await page.evaluate(
 		"(_sel) => { const e = document.querySelector(_sel); if (e) e.select(); }",
@@ -63,8 +74,8 @@ async def _robust_type(page, selector: str, text: str):
 	)
 	await page.keyboard.down("Backspace")
 	await page.keyboard.up("Backspace")
-	await asyncio.sleep(0.05)
-	await page.keyboard.type(text, delay=25)
+	await asyncio.sleep(0.03)
+	await page.keyboard.type(text, delay=5)
 	value = await page.evaluate(
 		"(_sel) => document.querySelector(_sel).value", selector
 	)
@@ -88,7 +99,7 @@ def _get_faker() -> Faker:
 	return _fake
 
 
-def get_random_string(length):
+def get_random_string(length: int) -> str:
 	"""Generate a random string with a given length."""
 	lower_letters = string.ascii_lowercase
 	upper_letters = string.ascii_uppercase
@@ -98,7 +109,7 @@ def get_random_string(length):
 	return "".join(random.choice(alphabet) for _ in range(length))
 
 
-async def initial_setup(context, message, credentials):
+async def initial_setup(context: object, message: object, credentials: Credentials) -> None:
 	"""Initial setup for the account.
 
 	Opens the MEGA confirmation link, enters the account password to finish
@@ -121,7 +132,21 @@ async def initial_setup(context, message, credentials):
 
 	confirm_page = await context.newPage()
 	try:
-		await confirm_page.goto(confirm_link, waitUntil="domcontentloaded")
+		await confirm_page.goto(
+			confirm_link, waitUntil="domcontentloaded", timeout=10000
+		)
+
+		# MEGA may perform an instant JS redirect from /confirm to /fm/
+		# (auto-confirm flow).  domcontentloaded fires before that redirect
+		# completes, so the URL may still contain "confirm" at this point.
+		# Give MEGA up to 2 s to settle before we decide what flow we're in.
+		try:
+			await confirm_page.waitForFunction(
+				"() => !location.href.includes('confirm')",
+				timeout=2000,
+			)
+		except Exception:
+			_log("[confirm] still on confirm page after 2s wait, continuing", Colours.WARNING)
 
 		# Modern MEGA flow: the link may redirect to /fm/ (file manager),
 		# meaning the account is already confirmed — no password needed.
@@ -131,14 +156,14 @@ async def initial_setup(context, message, credentials):
 				f"[confirm] already confirmed (redirected to {current_url})",
 				Colours.OKGREEN,
 			)
-			confirm_page.close()
+			await confirm_page.close()
 			return
 
 		password_selectors = ["#login-password2", "#confirm-password2", "#password"]
 		password_field = None
 		for sel in password_selectors:
 			try:
-				await confirm_page.waitForSelector(sel, timeout=10000)
+				await confirm_page.waitForSelector(sel, timeout=3000)
 				password_field = sel
 				break
 			except Exception:
@@ -146,7 +171,23 @@ async def initial_setup(context, message, credentials):
 
 		if password_field is None:
 			_step("[confirm] confirm page: no password field found", Colours.WARNING)
-			raise RuntimeError("Confirm page password field not found.")
+			# Diagnose what page MEGA actually served — could be a login page,
+			# CAPTCHA, phone-verify, or an error page.
+			diagnosis = await confirm_page.evaluate(
+				"""() => {
+					const url = location.href;
+					const title = document.title || '';
+					const text = (document.body && document.body.innerText) || '';
+					const hasCaptcha = /captcha|recaptcha|hcaptcha/i.test(text + title);
+					const hasPhone   = /phone|sms|mobile/i.test(text + title);
+					const hasLogin   = /log in|sign in|login/i.test(text + title);
+					const hasError   = /error|blocked|rate.limit|too.many/i.test(text + title);
+					return JSON.stringify({url, title, hasCaptcha, hasPhone, hasLogin, hasError});
+				}"""
+			)
+			raise RuntimeError(
+				f"Confirm page password field not found. Page diagnosis: {diagnosis}"
+			)
 
 		_log(f"[confirm] typing password into {password_field} ...", Colours.HEADER)
 		await _robust_type(confirm_page, password_field, credentials.password)
@@ -168,7 +209,7 @@ async def initial_setup(context, message, credentials):
 			submit_selectors = [".login-button", ".register-button", "#login-button2"]
 			for sel in submit_selectors:
 				try:
-					await confirm_page.waitForSelector(sel, timeout=10000)
+					await confirm_page.waitForSelector(sel, timeout=3000)
 					await confirm_page.click(sel)
 					break
 				except Exception:
@@ -184,7 +225,7 @@ async def initial_setup(context, message, credentials):
 		try:
 			await confirm_page.waitForFunction(
 				"() => !location.href.includes('confirm')",
-				timeout=30000,
+				timeout=10000,
 			)
 		except Exception:
 			# Still on the confirm page after 30s: surface any visible error text.
@@ -207,7 +248,7 @@ async def initial_setup(context, message, credentials):
 		# is shown, so a brand-new browser session starts at the login screen.
 		try:
 			await confirm_page.waitForSelector(
-				".dialog-download-recovery-key", timeout=5000
+				".dialog-download-recovery-key", timeout=1500
 			)
 			_log("[confirm] dismissing recovery-key prompt ...", Colours.HEADER)
 			await confirm_page.evaluate(
@@ -229,7 +270,7 @@ async def initial_setup(context, message, credentials):
 			pass
 
 
-async def mail_login(credentials: Credentials, provider_name: str = "mailtm"):
+async def mail_login(credentials: Credentials, provider_name: str = "mailtm") -> object | None:
 	"""Log into the email account and return a mailbox object.
 
 	For mail.tm (default): retries with backoff and caches the session
@@ -238,9 +279,7 @@ async def mail_login(credentials: Credentials, provider_name: str = "mailtm"):
 	global _last_mail_account, _last_mail_password
 
 	if provider_name != "mailtm":
-		from utilities.provider import get_provider
-
-		prov = get_provider(provider_name)
+		prov = _get_provider(provider_name)
 		if prov is not None:
 			return await prov.login(credentials)
 		raise ValueError(f"Unknown email provider: {provider_name}")
@@ -249,10 +288,11 @@ async def mail_login(credentials: Credentials, provider_name: str = "mailtm"):
 		_log("[mail] reusing cached mail.tm account across retries.", Colours.OKCYAN)
 		return _last_mail_account
 
-	max_retries = 10
+	max_retries = 5
 	for attempt in range(1, max_retries + 1):
 		try:
-			mail = pymailtm.Account(
+			mail = await asyncio.to_thread(
+				pymailtm.Account,
 				credentials.id, credentials.email, credentials.emailPassword
 			)
 			_log(f"[mail] logged into mailbox {credentials.email}", Colours.OKGREEN)
@@ -265,44 +305,42 @@ async def mail_login(credentials: Credentials, provider_name: str = "mailtm"):
 				f"[mail] login failed, retrying ({attempt}/{max_retries})...",
 				Colours.WARNING,
 			)
-			await asyncio.sleep(min(attempt, 5))
+			await asyncio.sleep(min(attempt, 3))
 
 	raise CouldNotGetAccountException(
 		"Could not log into the mail.tm account after multiple attempts."
 	)
 
 
-async def get_mail(mail, max_attempts: int = 120):
+async def get_mail(mail: object, max_attempts: int = 120) -> object:
 	"""Get the latest email from the mailbox.
 
 	For mail.tm mailboxes (pymailtm Account objects), uses the existing
 	polling loop.  For other providers (Mailbox objects from the ABC),
 	delegates to the provider's get_message and retries on LookupError.
 
-	max_attempts * 1.0s sleep ≈ 2min of polling before giving up.
+	Polling interval: fixed 2s instead of exponential backoff so the
+	email is detected as soon as it arrives, not delayed by deep backoff.
 	"""
 	# If the mailbox has a provider attribute, it's from the ABC.
 	if hasattr(mail, "provider"):
 		_log("[mail] polling for confirmation email ...", Colours.HEADER)
-		from utilities.provider import get_provider
-
-		prov = get_provider(mail.provider)
+		prov = _get_provider(mail.provider)
 		if prov is not None:
 			for _attempt in range(1, max_attempts + 1):
 				try:
 					return await prov.get_message(mail)
 				except LookupError:
-					await asyncio.sleep(1.0)
+					await asyncio.sleep(2)
 			raise LookupError("Confirmation email not received after polling.")
 		raise ValueError(f"Unknown provider: {mail.provider}")
 
 	# --- mail.tm specific ---
-	from pymailtm.pymailtm import CouldNotGetMessagesException
-
 	_log("[mail] polling for MEGA's confirmation email ...", Colours.HEADER)
 	for attempt in range(1, max_attempts + 1):
 		try:
-			message = mail.get_messages()[0]
+			messages = await asyncio.to_thread(mail.get_messages)
+			message = messages[0]
 			clear_status_line()
 			_step("[mail] confirmation email received.", Colours.OKGREEN)
 			return message
@@ -312,7 +350,7 @@ async def get_mail(mail, max_attempts: int = 120):
 				f"[mail] waiting for confirmation email ({attempt}/{max_attempts})...",
 				Colours.WARNING,
 			)
-			await asyncio.sleep(1.0)
+			await asyncio.sleep(2)
 
 	clear_status_line()
 	raise CouldNotGetMessagesException(
@@ -320,14 +358,14 @@ async def get_mail(mail, max_attempts: int = 120):
 	)
 
 
-async def type_name(page: pyppeteer.page.Page, credentials: Credentials):
+async def type_name(page: pyppeteer.page.Page, credentials: Credentials) -> None:
 	"""Types name and email into the register fields."""
 	firstname = _get_faker().first_name()
 	_step("[register] opening mega.nz/register ...", Colours.HEADER)
-	await page.goto("https://mega.nz/register")
+	await page.goto("https://mega.nz/register", waitUntil="domcontentloaded")
 
 	try:
-		await page.waitForSelector("#register-firstname", timeout=45000)
+		await page.waitForSelector("#register-firstname", timeout=10000)
 	except Exception:
 		# MEGA serves a near-empty shell when it rate-limits / blocks an IP
 		# or detects automation: the JS app never mounts the form. Detect
@@ -342,7 +380,7 @@ async def type_name(page: pyppeteer.page.Page, credentials: Credentials):
 			"network/exit node."
 		) from None
 
-	await page.waitForSelector("#register-email")
+	await page.waitForSelector("#register-email", timeout=10000)
 	# The firstname field is a plain input; page.type is fine here.
 	await page.type("#register-firstname", firstname)
 	_log(f"[register] firstname: {firstname}")
@@ -353,20 +391,20 @@ async def type_name(page: pyppeteer.page.Page, credentials: Credentials):
 	_log("[register] name + email filled in.", Colours.OKBLUE)
 
 
-async def finish_form(page: pyppeteer.page.Page, credentials: Credentials):
+async def finish_form(page: pyppeteer.page.Page, credentials: Credentials) -> None:
 	"""Accepts the terms (if visible) and submits the register form."""
 	try:
-		await page.waitForSelector(".privacy-check", timeout=5000)
+		await page.waitForSelector(".privacy-check", timeout=3000)
 		await page.click(".privacy-check", {"force": True})
 		_log("[register] accepted privacy check.")
 	except Exception:
 		_log("[register] no privacy check shown (skipped).")
-	await page.waitForSelector(".register-button")
+	await page.waitForSelector(".register-button", timeout=10000)
 	_step("[register] submitting registration form ...", Colours.HEADER)
 	await page.click(".register-button")
 
 
-async def type_password(page: pyppeteer.page.Page, credentials: Credentials):
+async def type_password(page: pyppeteer.page.Page, credentials: Credentials) -> None:
 	"""Types the password into the password field and accepts terms.
 
 	MEGA's password input uses a custom input handler that drops the first
@@ -400,41 +438,56 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 	if provider_name != "mailtm":
 		_last_mail_account = None
 		_last_mail_password = ""
-		from utilities.provider import get_provider
 
-		prov = get_provider(provider_name)
+		prov = _get_provider(provider_name)
 		if prov is not None:
 			return await prov.create_account()
 		raise ValueError(f"Unknown email provider: {provider_name}")
 
 	# --- mail.tm specific ---
-	_last_mail_account = None
-	_last_mail_password = ""
+	if _last_mail_account is None:
+		if _mailtm_domains is None:
+			_log("[mail] fetching available domains ...", Colours.HEADER)
+			try:
+				resp = await asyncio.to_thread(
+					requests.get,
+					"https://api.mail.tm/domains",
+					headers={"accept": "application/ld+json"},
+					timeout=15,
+				)
+				resp.raise_for_status()
+				_mailtm_domains = [
+					d["domain"] for d in resp.json()["hydra:member"]
+				]
+			except Exception as e:
+				raise CouldNotGetAccountException(
+					f"Could not fetch mail.tm domains: {e}"
+				) from e
 
-	mail = pymailtm.MailTm()
-
-	# Fetch and cache the domain list across retries (it never changes).
-	if _mailtm_domains is None:
-		_log("[mail] fetching available domains ...", Colours.HEADER)
-		try:
-			_mailtm_domains = mail._get_domains_list()
-		except Exception as e:
-			raise CouldNotGetAccountException(
-				f"Could not fetch mail.tm domains: {e}"
-			) from e
-
-	# Monkey-patch MailTm so it uses our cached domains.
-	mail._get_domains_list = lambda: _mailtm_domains
-
-	max_retries = 20
+	max_retries = 10
 	last_error = None
 	for attempt in range(1, max_retries + 1):
 		try:
 			address = _unique_mail_address(_mailtm_domains)
 			password = get_random_string(10)
-			response = mail._make_account_request("accounts", address, password)
-			account = pymailtm.Account(response["id"], response["address"], password)
-			mail._save_account(account)
+			step_resp = await asyncio.to_thread(
+				requests.post,
+				"https://api.mail.tm/accounts",
+				json={"address": address, "password": password},
+				headers={"accept": "application/ld+json"},
+				timeout=10,
+			)
+			if step_resp.status_code not in (200, 201):
+				raise CouldNotGetAccountException(
+					f"HTTP {step_resp.status_code}"
+				)
+			response_data = step_resp.json()
+			account = pymailtm.Account(
+				response_data["id"], response_data["address"], password
+			)
+			# Prime the cache so mail_login can reuse this account immediately.
+			_last_mail_account = account
+			_last_mail_password = password
 			break
 		except CouldNotGetAccountException as e:
 			last_error = str(e)
@@ -442,10 +495,8 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 				f"[mail] retry {attempt}/{max_retries} ({last_error})...",
 				Colours.WARNING,
 			)
-			# HTTP 429 (rate limiting) needs exponential backoff.
-			# Other errors (address collisions) need only a short jittered wait.
 			if "429" in last_error or "Too Many" in last_error:
-				delay = min(2 ** (attempt - 1) + random.uniform(0, 1), 30)
+				delay = min(2 ** (attempt - 1) + random.uniform(0, 1), 10)
 			else:
 				delay = 0.3 + (attempt % 5) * 0.25
 			await asyncio.sleep(delay)
@@ -468,14 +519,5 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 
 
 def _unique_mail_address(domains: list[str]) -> str:
-	"""Build a mail.tm address with a unique-enough local part.
-
-	The random_username library (used by pymailtm internally) generates
-	common words like 'pleasedpepper' that collide often. We instead
-	generate a unique address using high-entropy random characters with
-	a human-friendly prefix, drastically reducing the chance of hitting
-	HTTP 422 "already used".
-	"""
-	local = f"mt{get_random_string(12)}"
 	domain = random.choice(domains)
-	return f"{local}@{domain}"
+	return f"mt{get_random_string(12)}@{domain}"

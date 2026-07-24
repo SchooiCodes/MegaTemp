@@ -26,20 +26,6 @@ def _log(text, colour=Colours.OKCYAN):
 		p_print(text, colour)
 
 
-def _get_random_string(length: int = 14) -> str:
-	import string
-	import random as rnd
-
-	return "".join(rnd.choices(string.ascii_letters + string.digits, k=length))
-
-
-def _unique_mail_address(domains: list[str]) -> str:
-	"""Build a mail.tm address with high-entropy local part."""
-	local = f"mt{_get_random_string(12)}"
-	domain = random.choice(domains)
-	return f"{local}@{domain}"
-
-
 class MailTmProvider(EmailProvider):
 	"""Email provider backed by mail.tm (via pymailtm)."""
 
@@ -56,7 +42,9 @@ class MailTmProvider(EmailProvider):
 		if self._mailtm_domains is None:
 			_step("[mail] fetching available domains ...", Colours.HEADER)
 			try:
-				self.__class__._mailtm_domains = mail._get_domains_list()
+				self.__class__._mailtm_domains = await asyncio.to_thread(
+					mail._get_domains_list
+				)
 			except Exception as e:
 				raise CouldNotGetAccountException(
 					f"Could not fetch mail.tm domains: {e}"
@@ -64,13 +52,16 @@ class MailTmProvider(EmailProvider):
 
 		mail._get_domains_list = lambda: self._mailtm_domains
 
-		max_retries = 20
+		max_retries = 10
 		last_error = None
 		for attempt in range(1, max_retries + 1):
 			try:
+				from utilities.web import _unique_mail_address, get_random_string
 				address = _unique_mail_address(self._mailtm_domains)
-				password = _get_random_string(10)
-				response = mail._make_account_request("accounts", address, password)
+				password = get_random_string(10)
+				response = await asyncio.to_thread(
+					mail._make_account_request, "accounts", address, password
+				)
 				account = pymailtm.Account(
 					response["id"], response["address"], password
 				)
@@ -85,7 +76,7 @@ class MailTmProvider(EmailProvider):
 				# HTTP 429 (rate limiting) — exponential backoff with jitter.
 				# Address collisions — short jittered wait is sufficient.
 				if "429" in last_error or "Too Many" in last_error:
-					delay = min(2 ** (attempt - 1) + random.uniform(0, 1), 30)
+					delay = min(2 ** (attempt - 1) + random.uniform(0, 1), 10)
 				else:
 					delay = 0.3 + (attempt % 5) * 0.25
 				await asyncio.sleep(delay)
@@ -99,21 +90,24 @@ class MailTmProvider(EmailProvider):
 		credentials = Credentials()
 		credentials.email = account.address
 		credentials.emailPassword = account.password
-		credentials.password = _get_random_string(14)
+		from utilities.web import get_random_string
+		credentials.password = get_random_string(14)
 		credentials.id = account.id_
 		return credentials
 
 	async def login(self, credentials: Credentials) -> Mailbox:
 		"""Log into an existing mail.tm inbox."""
 		mail = pymailtm.MailTm()
-		account = mail.login(credentials.email, credentials.emailPassword)
+		account = await asyncio.to_thread(
+			mail.login, credentials.email, credentials.emailPassword
+		)
 		return Mailbox(provider=self.name, address=account.id_)
 
 	async def get_message(self, mailbox: Mailbox) -> object:
 		"""Fetch the first unread message, or raise."""
 		mail = pymailtm.MailTm()
-		account = mail.login(mailbox.address, "")
-		message = account.get_message()
+		account = await asyncio.to_thread(mail.login, mailbox.address, "")
+		message = await asyncio.to_thread(account.get_message)
 		if message is None:
 			raise LookupError("No messages")
 		return {

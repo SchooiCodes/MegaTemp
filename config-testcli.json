@@ -1,0 +1,17 @@
+{
+    "accountFormat": "",
+    "csvExport": false,
+    "emailProvider": "mailtm",
+    "encryptionPassword": "",
+    "executablePath": "/usr/bin/chromium",
+    "jsonlExport": false,
+    "mailTimeout": 120,
+    "maxAttempts": 4,
+    "proxy": "",
+    "proxyFile": "",
+    "proxyPerAttempt": false,
+    "quiet": false,
+    "schemaVersion": 3,
+    "visibleBrowser": false,
+    "webhookUrl": ""
+}

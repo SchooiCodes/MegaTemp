@@ -14,6 +14,8 @@ from utilities.etc import p_print, Colours
 # If tenacity is available we use it; otherwise a simple loop.
 # ---------------------------------------------------------------------------
 
+import utilities.compat  # noqa: F401 — restores asyncio.coroutine for tenacity
+
 try:
 	import tenacity
 
@@ -55,9 +57,9 @@ class retry:
 		if _HAS_TENACITY and self.max_attempts > 1:
 
 			def _before(retry_state):
-				if retry_state.attempt_number > 1:
+				if retry_state.attempt_number < self.max_attempts:
 					_log_retry(
-						retry_state.attempt_number - 1,
+						retry_state.attempt_number,
 						retry_state.outcome.exception(),
 						self.label or "call",
 					)

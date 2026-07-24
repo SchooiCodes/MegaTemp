@@ -2,25 +2,16 @@
 
 import os
 
-from mega import Mega
-
 from utilities.etc import Credentials, p_print, Colours, separator
 from utilities.menu import prompt_int, prompt_path, pause
 from utilities.retry import retry
 
 
 def list_files(credentials: Credentials) -> list[dict]:
-	"""List all files in the MEGA account root (node 2).
-
-	Returns a list of dicts with keys: name, size, id, node (full node object).
-	"""
-	mega = Mega()
-	try:
-		retry(label="MEGA login", max_attempts=3)(mega.login)(
-			credentials.email, credentials.password
-		)
-	except Exception as e:
-		p_print(f"Login failed for {credentials.email}: {e}", Colours.FAIL)
+	"""List all files in the MEGA account root (node 2)."""
+	from services.upload import _safe_mega_session
+	mega = _safe_mega_session(credentials)
+	if mega is None:
 		return []
 
 	try:
@@ -40,7 +31,7 @@ def list_files(credentials: Credentials) -> list[dict]:
 					"node": (
 						fid,
 						info,
-					),  # tuple (node_id, node_info) for mega.download()
+					),
 				}
 			)
 	result.sort(key=lambda x: x["name"].lower())
@@ -50,21 +41,36 @@ def list_files(credentials: Credentials) -> list[dict]:
 def download_file(
 	credentials: Credentials, node: dict, dest_dir: str = "."
 ) -> str | None:
-	"""Download a file from MEGA by its node dict. Returns local path or None.
-
-	``node`` must be the full node dict from ``mega.get_files_in_node()``
-	(including the ``a``, ``h``, ``k``, ``s``, ``i`` attributes).
-	"""
-	mega = Mega()
-	try:
-		mega.login(credentials.email, credentials.password)
-	except Exception as e:
-		p_print(f"Login failed: {e}", Colours.FAIL)
+	"""Download a file from MEGA by its node dict. Returns local path or None."""
+	from services.upload import _safe_mega_session
+	mega = _safe_mega_session(credentials)
+	if mega is None:
 		return None
 
 	try:
 		p_print(f"Downloading to {dest_dir} ...", Colours.HEADER)
-		local_path = mega.download(node, dest_path=dest_dir)
+		import threading
+
+		result = [None]
+		exception = [None]
+
+		def _run():
+			try:
+				result[0] = retry(label="mega.download", max_attempts=3)(
+				    mega.download
+				)(node, dest_path=dest_dir)
+			except Exception as e:
+				exception[0] = e
+
+		t = threading.Thread(target=_run, daemon=True)
+		t.start()
+		t.join(timeout=300)
+		if t.is_alive():
+			p_print("Download timed out (5 min limit).", Colours.FAIL)
+			return None
+		if exception[0]:
+			raise exception[0]
+		local_path = result[0]
 		p_print(f"Downloaded to {local_path}", Colours.OKGREEN)
 		return local_path
 	except Exception as e:

@@ -64,8 +64,21 @@ python main.py
 | **Desktop notifications** | On loop/parallel completion (Linux, macOS, Windows) |
 | **Upload progress bar** | Animated `[████░░░░] 60%` during file upload |
 | **Tab completion** | Press Tab when entering file paths in upload/download prompts |
+| **Regex search** | Press `r` to toggle regex mode in credentials viewer |
+| **Account management** | Menu → *Account Management*: delete, change password, create folder |
+| **Password generator** | Settings → *Generate Password* (cryptographically random) |
+| **Storage visualization** | Health dashboard shows ASCII bar of used quota |
+| **Login timestamps** | Health dashboard shows "ll: Xd ago" per account |
+| **Password manager export** | Menu → *Export as Bitwarden/1Password/KeePass CSV* |
+| **Provider fallback** | Auto-falls back from mailtm to guerrillamail on failure |
+| **Webhooks** | `--webhook-url URL` — POSTs JSON on success/failure |
+| **Proxy auto-fetch** | `--proxy-url URL` — fetch proxy lists from remote URLs |
+| **Credential encryption** | `--encryption-password PW` — encrypts passwords at rest |
+| **Config profiles** | `--profile NAME` — separate config files per profile |
+| **Quiet mode** | `--quiet` — suppress non-essential output for scripting |
+| **Mail timeout** | `--mail-timeout SECS` — configurable confirmation wait |
 | **Docker support** | `docker build -t megatem . && docker run -it megatem` |
-| **Docker Compose** | `docker compose up` with persistent credentials |
+| **Docker Compose** | `docker compose up` with persistent credentials + healthcheck |
 | **Makefile** | `make run`, `make test`, `make lint`, `make format`, `make clean` |
 
 ---
@@ -75,7 +88,7 @@ python main.py
 Run without arguments:
 
 ```
-MegaTemp v1.3.0
+MegaTemp v1.4.0
 ╔══════════════════════════════════════════════════════╗
 ║  Create Account                                      ║
 ║  Loop Create                                         ║
@@ -122,6 +135,16 @@ Settings (per-session): max retries, visible browser, CSV export toggle.
 | `--version` | Show version and exit |
 | `--provider <name>` | Email provider: `mailtm` or `guerrillamail` |
 | `--health` | Show health dashboard (quota, age, status) from CLI |
+| `--json` | JSON output for --health |
+| `--quiet` | Suppress non-essential output for scripting |
+| `--mail-timeout <s>` | Seconds to wait for confirmation email (default 120) |
+| `--webhook-url <url>` | POST JSON payload on registration success/failure |
+| `--proxy-url <url>` | Auto-fetch proxy list from a remote URL |
+| `--encryption-password <pw>` | Encrypt saved passwords at rest |
+| `--profile <name>` | Use `config-{name}.json` instead of `config.json` |
+| `--export-bitwarden` | Export credentials in Bitwarden CSV format |
+| `--export-onepassword` | Export credentials in 1Password CSV format |
+| `--export-keepass` | Export credentials in KeePass CSV format |
 
 > **Don't** combine services (`-e`, `-ka`) with upload (`-f`, `-p`).
 

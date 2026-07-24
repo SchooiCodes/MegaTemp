@@ -3,11 +3,13 @@
 import asyncio
 import argparse
 import os
+import random
 import sys
 import time
 import subprocess
 from typing import Tuple
 import pyppeteer
+import pyppeteer.errors
 
 # When available, import pyperclip for clipboard copy.
 try:
@@ -19,18 +21,17 @@ except ImportError:
 
 # tenacity (a transitive dependency of mega.py) uses @asyncio.coroutine
 # in its _asyncio module, which was removed in Python 3.11. If we're
-# running on a Python where it's absent, restore it as a no-op shim so
-# tenacity can still import cleanly. This works both for the frozen EXE
-# (built with PyInstaller on Python 3.12) and for source installs on
-# Python 3.11+.
-if not hasattr(asyncio, "coroutine"):
-	asyncio.coroutine = lambda f: f  # no-op decorator
+import utilities.compat  # noqa: F401 — restores asyncio.coroutine for tenacity
 
-from services.alive import keepalive
-from services.upload import upload_file
-from services.extract import extract_credentials
-from services.download import _action_browse_cloud
-from utilities.fs import (
+from utilities.mega_patch import patch_mega
+
+patch_mega()  # noqa: E402 — must run before service imports
+
+from services.alive import keepalive  # noqa: E402
+from services.upload import upload_file, get_mega_session, _upload_with_session  # noqa: E402
+from services.extract import extract_credentials  # noqa: E402
+from services.download import _action_browse_cloud  # noqa: E402
+from utilities.fs import (  # noqa: E402
 	Config,
 	concrete_read_config,
 	read_config,
@@ -41,7 +42,7 @@ from utilities.fs import (
 	save_credentials_csv,
 	save_credentials_jsonl,
 )
-from utilities.web import (
+from utilities.web import (  # noqa: E402
 	finish_form,
 	generate_mail,
 	type_name,
@@ -51,8 +52,8 @@ from utilities.web import (
 	get_mail,
 	set_verbose,
 )
-from pymailtm.pymailtm import CouldNotGetAccountException, CouldNotGetMessagesException
-from utilities.etc import (
+from pymailtm.pymailtm import CouldNotGetAccountException, CouldNotGetMessagesException  # noqa: E402
+from utilities.etc import (  # noqa: E402
 	Credentials,
 	p_print,
 	Colours,
@@ -68,9 +69,11 @@ from utilities.etc import (
 	elapsed,
 	VERSION,
 	notify,
+	set_quiet,
+	send_webhook,
 	capture_worker_output,
 )
-from utilities.menu import (
+from utilities.menu import (  # noqa: E402
 	Menu,
 	MenuItem,
 	_BACK,
@@ -81,8 +84,28 @@ from utilities.menu import (
 	pause,
 )
 
-# Proxy manager — populated from CLI args at startup.
-_proxy_manager: ProxyManager = ProxyManager()
+# Cached working directory (syscall cache — avoid repeated os.getcwd() calls).
+_CWD = os.getcwd()
+
+# Cached browser base args (built once, reused across all launch calls).
+_BROWSER_BASE_ARGS = [
+	"--no-sandbox",
+	"--disable-gpu",
+	"--disable-dev-shm-usage",
+	"--no-first-run",
+	"--disable-background-networking",
+	"--disable-sync",
+	"--disable-background-timer-throttling",
+	"--disable-infobars",
+	"--window-position=0,0",
+	"--ignore-certificate-errors",
+	"--ignore-certificate-errors-spki-list",
+	'--user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0"',
+]
+
+# Proxy manager — instantiated after CLI parsing so --proxy / --proxy-file
+# are honoured. The real initialisation is at the bottom of the module.
+_proxy_manager: ProxyManager | None = None
 
 # Harmless pyppeteer teardown noise: after we close the browser, pyppeteer's
 # connection may still have in-flight CDP messages whose futures resolve with a
@@ -90,7 +113,6 @@ _proxy_manager: ProxyManager = ProxyManager()
 # then logs them as "Future exception was never retrieved". These are not real
 # errors, so we swallow exactly those while letting anything else through.
 _HARMLESS_ASYNC_ERRORS = ("Target closed", "No session with given id")
-
 
 def _quiet_async_exceptions(loop, context):
 	"""asyncio exception handler that hides benign pyppeteer teardown errors.
@@ -116,6 +138,13 @@ def _quiet_async_exceptions(loop, context):
 	loop.default_exception_handler(context)
 
 
+def _install_async_handler():
+	try:
+		asyncio.get_running_loop().set_exception_handler(_quiet_async_exceptions)
+	except RuntimeError:
+		pass
+
+
 def _cleanup_pyppeteer(browser):
 	"""Restore our SIGINT handler and kill the Chrome subprocess.
 
@@ -133,7 +162,12 @@ def _cleanup_pyppeteer(browser):
 	try:
 		proc = getattr(browser, "_process", None)
 		if proc is not None:
-			proc.kill()
+			proc.terminate()
+			try:
+				proc.wait(timeout=5)
+			except Exception:
+				proc.kill()
+				proc.wait(timeout=2)
 	except Exception:
 		pass
 
@@ -167,21 +201,7 @@ default_installs = [
 
 def _build_browser_args(proxy_override: str | None = None) -> list[str]:
 	"""Build browser launch args, optionally adding proxy."""
-	base = [
-		"--no-sandbox",
-		"--disable-setuid-sandbox",
-		"--disable-gpu",
-		"--disable-dev-shm-usage",
-		"--no-first-run",
-		"--disable-background-networking",
-		"--disable-sync",
-		"--disable-background-timer-throttling",
-		"--disable-infobars",
-		"--window-position=0,0",
-		"--ignore-certificate-errors",
-		"--ignore-certificate-errors-spki-list",
-		'--user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0"',
-	]
+	base = list(_BROWSER_BASE_ARGS)
 	if proxy_override:
 		base.append(f"--proxy-server={proxy_override}")
 	else:
@@ -189,6 +209,31 @@ def _build_browser_args(proxy_override: str | None = None) -> list[str]:
 		if proxy:
 			base.append(f"--proxy-server={proxy}")
 	return base
+
+
+async def _launch_browser(kwargs: dict):
+	"""Launch pyppeteer and close default about:blank pages."""
+	last_error = None
+	for attempt in range(2):
+		try:
+			browser = await pyppeteer.launch(kwargs)
+			for pg in await browser.pages():
+				await pg.close()
+			import signal as _signal
+			_signal.signal(_signal.SIGINT, _sigint_handler)
+			return browser
+		except Exception as exc:
+			last_error = exc
+			p_print(
+				f"[browser] launch failed ({exc!r}), retrying...",
+				Colours.WARNING,
+			)
+			if attempt == 0:
+				clear_tmp()
+				await asyncio.sleep(1)
+	raise RuntimeError(
+		f"Browser failed to launch after retry: {last_error!r}"
+	) from last_error
 
 
 parser = argparse.ArgumentParser()
@@ -276,10 +321,34 @@ parser.add_argument(
 	help="Rotate proxy on every registration attempt (not just per batch).",
 )
 parser.add_argument(
+	"--proxy-url",
+	required=False,
+	default="",
+	help="URL to auto-fetch proxy list from (plain text or JSON array).",
+)
+parser.add_argument(
 	"--export-jsonl",
 	required=False,
 	action="store_true",
 	help="Also export every saved account to credentials/accounts.jsonl (JSON Lines).",
+)
+parser.add_argument(
+	"--export-bitwarden",
+	required=False,
+	action="store_true",
+	help="Export credentials in Bitwarden CSV format.",
+)
+parser.add_argument(
+	"--export-onepassword",
+	required=False,
+	action="store_true",
+	help="Export credentials in 1Password CSV format.",
+)
+parser.add_argument(
+	"--export-keepass",
+	required=False,
+	action="store_true",
+	help="Export credentials in KeePass CSV format.",
 )
 parser.add_argument(
 	"--prune",
@@ -354,6 +423,37 @@ parser.add_argument(
 	action="store_true",
 	help="Output health dashboard as JSON (use with --health).",
 )
+parser.add_argument(
+	"--quiet",
+	required=False,
+	action="store_true",
+	help="Suppress non-essential output for scripting.",
+)
+parser.add_argument(
+	"--profile",
+	required=False,
+	default="",
+	help="Config profile name (uses config-{name}.json instead of config.json).",
+)
+parser.add_argument(
+	"--mail-timeout",
+	required=False,
+	type=int,
+	default=120,
+	help="Seconds to wait for MEGA confirmation email (default: 120).",
+)
+parser.add_argument(
+	"--webhook-url",
+	required=False,
+	default="",
+	help="URL to POST JSON payload on registration success/failure.",
+)
+parser.add_argument(
+	"--encryption-password",
+	required=False,
+	default="",
+	help="Optional password to encrypt stored credentials at rest.",
+)
 
 console_args = parser.parse_args()
 
@@ -377,6 +477,10 @@ if console_args.json and not console_args.health:
 
 def setup() -> Tuple[str, Config]:
 	"""Sets up the configs so everything runs smoothly."""
+
+	from utilities.fs import set_config_profile
+	if console_args.profile:
+		set_config_profile(console_args.profile)
 
 	executable_path = ""
 	config = read_config()
@@ -419,6 +523,13 @@ def setup() -> Tuple[str, Config]:
 	return executable_path, config
 
 
+def _get_encryption_password(config) -> str:
+	"""Resolve encryption password: CLI arg > config."""
+	if console_args.encryption_password:
+		return console_args.encryption_password
+	return getattr(config, "encryptionPassword", "")
+
+
 def loop_registrations(
 	loop_count: int,
 	executable_path: str,
@@ -426,9 +537,12 @@ def loop_registrations(
 	visible: bool = False,
 	max_attempts: int = 4,
 	export_csv: bool = False,
+	export_jsonl: bool = False,
 	resume: bool = False,
 	provider_name: str | None = None,
-):
+	webhook_url: str = "",
+	encryption_password: str = "",
+) -> None:
 	"""Registers accounts in a loop, printing a summary at the end.
 
 	Launching Chromium takes ~8 s, so we launch *one* browser and share it
@@ -457,11 +571,11 @@ def loop_registrations(
 	async def _run_all():
 		nonlocal successes, failures, skip
 		p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
-		browser = await pyppeteer.launch(
+		browser = await _launch_browser(
 			{
 				"headless": not visible,
 				"ignoreHTTPSErrors": True,
-				"userDataDir": f"{os.getcwd()}/tmp",
+				"userDataDir": f"{_CWD}/tmp",
 				"args": _build_browser_args(),
 				"executablePath": executable_path,
 				"autoClose": False,
@@ -485,7 +599,10 @@ def loop_registrations(
 						visible=visible,
 						max_attempts=max_attempts,
 						export_csv=export_csv,
+						export_jsonl=export_jsonl,
 						provider_name=provider_name,
+						webhook_url=webhook_url,
+						encryption_password=encryption_password,
 						_browser=browser,
 					)
 					successes += 1
@@ -494,20 +611,22 @@ def loop_registrations(
 						successes += 1
 					else:
 						failures += 1
-				# Save checkpoint after every iteration.
-				save_checkpoint(
-					LoopState(
-						total=loop_count,
-						completed=successes,
-						failed=failures,
-						started_at=start,
+				# Save checkpoint every 5th iteration or every 30s.
+				if successes + failures == 1 or (successes + failures) % 5 == 0 or (time.monotonic() - start) > 30:
+					save_checkpoint(
+						LoopState(
+							total=loop_count,
+							completed=successes,
+							failed=failures,
+							started_at=start,
+						)
 					)
-				)
 		finally:
 			try:
 				await browser.close()
 			except Exception:
 				pass
+			_cleanup_pyppeteer(browser)
 
 	asyncio.run(_run_all())
 	clear_checkpoint()
@@ -535,12 +654,15 @@ def parallel_registrations(
 	loop_count: int,
 	executable_path: str,
 	config: Config,
-	parallelism: int,
+	parallelism: int = 1,
 	visible: bool = False,
 	max_attempts: int = 4,
 	export_csv: bool = False,
+	export_jsonl: bool = False,
 	provider_name: str | None = None,
-):
+	webhook_url: str = "",
+	encryption_password: str = "",
+) -> None:
 	"""Register accounts concurrently using N parallel workers.
 
 	Each worker launches its own Chromium browser. When proxies are
@@ -554,6 +676,12 @@ def parallel_registrations(
 
 	async def _worker(worker_id: int, proxy: str | None = None):
 		nonlocal successes, failures
+
+		# Stagger worker launches with jitter so 10 workers don't all
+		# hit MEGA from the same IP simultaneously and trigger rate limits.
+		stagger = worker_id * 2.5 + random.uniform(0, 1.5)
+		await asyncio.sleep(stagger)
+
 		p_print(
 			f"Worker {worker_id} starting{' with proxy' if proxy else ''}...",
 			Colours.OKCYAN,
@@ -562,13 +690,13 @@ def parallel_registrations(
 		_browser_kwargs = {
 			"headless": not visible,
 			"ignoreHTTPSErrors": True,
-			"userDataDir": f"{os.getcwd()}/tmp_{worker_id}",
+			"userDataDir": f"{_CWD}/tmp_{worker_id}",
 			"args": _build_browser_args(proxy_override=proxy),
 			"executablePath": executable_path,
 			"autoClose": False,
 			"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
 		}
-		browser = await pyppeteer.launch(_browser_kwargs)
+		browser = await _launch_browser(_browser_kwargs)
 
 		try:
 			while True:
@@ -593,7 +721,10 @@ def parallel_registrations(
 							visible=visible,
 							max_attempts=max_attempts,
 							export_csv=export_csv,
+							export_jsonl=export_jsonl,
 							provider_name=provider_name,
+							webhook_url=webhook_url,
+							encryption_password=encryption_password,
 							_browser=browser,
 						)
 						# already counted as success above
@@ -603,20 +734,23 @@ def parallel_registrations(
 								# Undo optimistic claim, count as failure
 								successes -= 1
 								failures += 1
+						# Brief cooldown before trying the next account so we
+						# don't hammer MEGA with back-to-back rate-limited requests.
+						if failures > 0:
+							await asyncio.sleep(1.0)
 					except Exception as exc:
 						buf.append((f"Worker {worker_id} error: {exc}", Colours.FAIL))
 						async with _lock:
-							# Undo optimistic claim, count as failure
 							successes -= 1
 							failures += 1
-						# The browser may be in a bad state (Chrome
-						# crashed, context leaked, etc).  Replace it so
-						# the next iteration doesn't fail instantly.
-						try:
-							await browser.close()
-						except Exception:
-							pass
-						browser = await pyppeteer.launch(_browser_kwargs)
+						if isinstance(exc, (pyppeteer.errors.BrowserError, pyppeteer.errors.PageError, pyppeteer.errors.NetworkError)):
+							try:
+								await browser.close()
+							except Exception:
+								pass
+							browser = await _launch_browser(_browser_kwargs)
+						else:
+							await asyncio.sleep(1.0)
 
 				# Flush the captured output under the lock so it
 				# appears as one contiguous block per registration.
@@ -628,6 +762,7 @@ def parallel_registrations(
 				await browser.close()
 			except Exception:
 				pass
+			_cleanup_pyppeteer(browser)
 
 	async def _run_all():
 		proxies = _proxy_manager.distribute(parallelism)
@@ -655,6 +790,9 @@ def parallel_registrations(
 	sys.exit(0)
 
 
+_PROVIDER_FALLBACKS = {"mailtm": "guerrillamail", "guerrillamail": "mailtm"}
+
+
 async def register(
 	credentials: Credentials | None,
 	executable_path: str,
@@ -662,129 +800,153 @@ async def register(
 	visible: bool = False,
 	max_attempts: int = 4,
 	export_csv: bool = False,
+	export_jsonl: bool = False,
 	provider_name: str | None = None,
-	_browser=None,  # internal: reuse across loop iterations
-):
+	webhook_url: str = "",
+	encryption_password: str = "",
+	_browser: object | None = None,  # internal: reuse across loop iterations
+) -> Credentials | None:
 	"""Registers and verifies a mega.nz account.
 
 	MEGA's confirmation email is sometimes delayed or not delivered by the
 	mail provider. To stay robust we retry the whole registration (with a
-	fresh email address) a few times before giving up.
+	fresh email address) a few times before giving up. If all attempts with
+	the primary provider fail, we fall back to the alternative provider.
 
 	When called from loop mode, pass a shared ``_browser`` so Chromium is
 	launched once instead of per-iteration.
 	"""
+	_install_async_handler()
 	message = None
 	start = time.monotonic()
-	provider_name = (
+	primary_provider = (
 		provider_name or getattr(config, "emailProvider", "mailtm") or "mailtm"
 	)
-
-	# Silence benign pyppeteer teardown warnings emitted during browser close.
-	asyncio.get_running_loop().set_exception_handler(_quiet_async_exceptions)
+	fallback_provider = _PROVIDER_FALLBACKS.get(primary_provider)
 
 	own_browser = _browser is None
 	browser = _browser
 
-	# Generate the first email address while the browser launches (parallelism).
-	first_mail_task = (
-		asyncio.create_task(generate_mail(provider_name)) if browser is None else None
-	)
+	for provider_attempt, prov in enumerate([primary_provider, fallback_provider]):
+		if prov is None:
+			break
+		if provider_attempt > 0:
+			p_print(
+				f"Switching to fallback provider '{prov}'...",
+				Colours.WARNING,
+			)
 
-	if browser is None:
-		p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
-		browser = await pyppeteer.launch(
-			{
-				"headless": not visible,
-				"ignoreHTTPSErrors": True,
-				"userDataDir": f"{os.getcwd()}/tmp",
-				"args": _build_browser_args(),
-				"executablePath": executable_path,
-				"autoClose": False,  # We run into runtime errors if we use autoClose
-				"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
-			}
+		message = None
+		first_mail_task = (
+			asyncio.create_task(generate_mail(prov)) if browser is None else None
 		)
 
-	context = await browser.createIncognitoBrowserContext()
+		if browser is None and provider_attempt == 0:
+			clear_tmp()
+			p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
+			browser = await _launch_browser(
+				{
+					"headless": not visible,
+					"ignoreHTTPSErrors": True,
+					"userDataDir": f"{_CWD}/tmp",
+					"args": _build_browser_args(),
+					"executablePath": executable_path,
+					"autoClose": False,
+					"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
+				}
+			)
 
-	try:
-		for attempt in range(1, max_attempts + 1):
-			separator(f"Registration attempt {attempt}/{max_attempts}")
-			page = None
-			try:
-				if attempt == 1 and first_mail_task is not None:
-					credentials = await first_mail_task
-				else:
-					credentials = await generate_mail(provider_name)
-				page = await context.newPage()
-				await type_name(page, credentials)
-				await type_password(page, credentials)
-				await finish_form(page, credentials)
+		context = await browser.createIncognitoBrowserContext()
 
-				mail = await mail_login(credentials, provider_name)
-				# No initial delay — start polling immediately;
-				# get_mail handles backoff internally.
+		try:
+			for attempt in range(1, max_attempts + 1):
+				separator(f"Registration attempt {attempt}/{max_attempts} ({prov})")
+				page = None
 				try:
-					message = await get_mail(mail)
-				except (CouldNotGetMessagesException, LookupError):
+					if attempt == 1 and first_mail_task is not None:
+						credentials = await first_mail_task
+					else:
+						credentials = await generate_mail(prov)
+					page = await context.newPage()
+					await type_name(page, credentials)
+					await type_password(page, credentials)
+					await finish_form(page, credentials)
+
+					mail = await mail_login(credentials, prov)
+					try:
+						message = await get_mail(mail, max_attempts=config.mailTimeout)
+					except (CouldNotGetMessagesException, LookupError):
+						p_print(
+							f"Confirmation email not received (attempt {attempt}/{max_attempts}). "
+							"Retrying with a new email address...",
+							Colours.WARNING,
+						)
+						await asyncio.sleep(min(1.0 * 1.5 ** (attempt - 1), 3.0))
+						continue
+
+					try:
+						await initial_setup(context, message, credentials)
+						break
+					except RuntimeError as e:
+						p_print(
+							f"Account confirmation failed ({e}). "
+							f"Retrying with a new email address (attempt {attempt}/{max_attempts})...",
+							Colours.WARNING,
+						)
+						await asyncio.sleep(min(1.0 * 1.5 ** (attempt - 1), 3.0))
+						continue
+				except CouldNotGetAccountException:
 					p_print(
-						f"Confirmation email not received (attempt {attempt}/{max_attempts}). "
-						"Retrying with a new email address...",
+						f"Could not generate email address (attempt {attempt}/{max_attempts}). "
+						"Retrying...",
 						Colours.WARNING,
 					)
+					await asyncio.sleep(min(1.0 * 1.5 ** (attempt - 1), 3.0))
 					continue
-
-				try:
-					await initial_setup(context, message, credentials)
-					break  # account confirmed successfully
-				except RuntimeError as e:
+				except Exception as e:
 					p_print(
-						f"Account confirmation failed ({e}). "
+						f"Registration step failed ({e}). "
 						f"Retrying with a new email address (attempt {attempt}/{max_attempts})...",
 						Colours.WARNING,
 					)
+					await asyncio.sleep(min(1.0 * 1.5 ** (attempt - 1), 3.0))
 					continue
-			except CouldNotGetAccountException:
-				p_print(
-					f"Could not generate email address (attempt {attempt}/{max_attempts}). "
-					"Retrying...",
-					Colours.WARNING,
-				)
-				continue
-			except Exception as e:
-				p_print(
-					f"Registration step failed ({e}). "
-					f"Retrying with a new email address (attempt {attempt}/{max_attempts})...",
-					Colours.WARNING,
-				)
-				continue
-			finally:
-				if page is not None:
-					try:
-						await page.close()
-					except Exception:
-						pass
-	finally:
-		# Release the incognito context (always).
-		try:
-			await context.close()
-		except Exception:
-			pass
-		# Only close the browser when we own it (single-account mode).
-		if own_browser:
+				finally:
+					if page is not None:
+						try:
+							await page.close()
+						except Exception:
+							pass
+
+			if message is not None:
+				break
+		finally:
 			try:
-				await browser.close()
-				# Suppress pyppeteer's atexit handler to avoid
-				# "Event loop is closed" crash when the TUI calls input()
-				# later (the atexit tries to killChrome() on a dead loop).
-				_cleanup_pyppeteer(browser)
+				await context.close()
 			except Exception:
 				pass
+
+	if own_browser:
+		try:
+			await browser.close()
+		except Exception:
+			pass
+		_cleanup_pyppeteer(browser)
 
 	if message is None:
 		p_print(
 			"Gave up registering the account after several attempts.",
 			Colours.FAIL,
+		)
+		await asyncio.to_thread(
+			send_webhook,
+			webhook_url,
+			"registration_failed",
+			{
+				"provider": provider_name or config.emailProvider,
+				"attempts": max_attempts,
+				"timestamp": time.time(),
+			},
 		)
 		sys.exit(1)
 
@@ -802,29 +964,29 @@ async def register(
 		Colours.OKCYAN,
 	)
 
+	await asyncio.to_thread(
+		send_webhook,
+		webhook_url,
+		"registration_success",
+		{
+			"email": credentials.email,
+			"provider": provider_name or config.emailProvider,
+			"timestamp": time.time(),
+		},
+	)
+
 	# Fire-and-forget delete_default in a background thread so the
 	# MEGA API call (~3-5s) does not block the main flow.
-	_delete_task = asyncio.create_task(asyncio.to_thread(delete_default, credentials))
+	asyncio.create_task(asyncio.to_thread(delete_default, credentials))
+
+	credentials.lastLogin = time.time()
 
 	p_print("Saving credentials ...", Colours.HEADER)
-	save_credentials(credentials, config.accountFormat)
-	if export_csv:
-		save_credentials_csv(credentials)
-	if console_args.export_jsonl:
-		save_credentials_jsonl(credentials)
-
-	# Give delete_default up to 5s to finish in the background while we
-	# save credentials and (optionally) upload a file. If it takes longer
-	# we move on — it's best-effort cleanup.
-	try:
-		await asyncio.wait_for(_delete_task, timeout=5.0)
-	except asyncio.TimeoutError:
-		pass
-	except Exception as e:
-		p_print(
-			f"Warning: could not remove the default welcome file: {e}",
-			Colours.WARNING,
-		)
+	await asyncio.gather(
+		asyncio.to_thread(save_credentials, credentials, config.accountFormat, encryption_password),
+		asyncio.to_thread(save_credentials_csv, credentials) if export_csv else asyncio.sleep(0),
+		asyncio.to_thread(save_credentials_jsonl, credentials) if export_jsonl else asyncio.sleep(0),
+	)
 
 	if console_args.file is not None:
 		try:
@@ -880,7 +1042,8 @@ def _load_settings():
 		"attempts": cfg.maxAttempts if cfg else 4,
 		"visible": cfg.visibleBrowser if cfg else False,
 		"export_csv": cfg.csvExport if cfg else False,
-		"export_jsonl": False,
+		"export_jsonl": cfg.jsonlExport if cfg else False,
+		"ka_interval": 0.0,
 	}
 
 
@@ -890,11 +1053,19 @@ def _save_settings():
 			"maxAttempts": _SETTINGS["attempts"],
 			"visibleBrowser": _SETTINGS["visible"],
 			"csvExport": _SETTINGS["export_csv"],
+			"jsonlExport": _SETTINGS["export_jsonl"],
 		}
 	)
 
 
 _load_settings()
+
+
+def _get_webhook_url(config) -> str:
+	"""Resolve webhook URL: CLI arg > config."""
+	if console_args.webhook_url:
+		return console_args.webhook_url
+	return getattr(config, "webhookUrl", "")
 
 
 def _action_create_one(executable_path, config):
@@ -909,6 +1080,9 @@ def _action_create_one(executable_path, config):
 				visible=_SETTINGS["visible"],
 				max_attempts=_SETTINGS["attempts"],
 				export_csv=_SETTINGS["export_csv"],
+				export_jsonl=_SETTINGS["export_jsonl"],
+				webhook_url=_get_webhook_url(config),
+				encryption_password=_get_encryption_password(config),
 			)
 		)
 	except SystemExit:
@@ -931,25 +1105,31 @@ def _action_loop_create(executable_path, config):
 	if not prompt_yes_no("Continue?"):
 		return
 	try:
-		if parallel > 1:
-			parallel_registrations(
-				count,
-				executable_path,
-				config,
-				parallelism=parallel,
-				visible=_SETTINGS["visible"],
-				max_attempts=_SETTINGS["attempts"],
-				export_csv=_SETTINGS["export_csv"],
-			)
-		else:
-			loop_registrations(
-				count,
-				executable_path,
-				config,
-				visible=_SETTINGS["visible"],
-				max_attempts=_SETTINGS["attempts"],
-				export_csv=_SETTINGS["export_csv"],
-			)
+			if parallel > 1:
+				parallel_registrations(
+					count,
+					executable_path,
+					config,
+					parallelism=parallel,
+					visible=_SETTINGS["visible"],
+					max_attempts=_SETTINGS["attempts"],
+					export_csv=_SETTINGS["export_csv"],
+					export_jsonl=_SETTINGS["export_jsonl"],
+					webhook_url=_get_webhook_url(config),
+					encryption_password=_get_encryption_password(config),
+				)
+			else:
+				loop_registrations(
+					count,
+					executable_path,
+					config,
+					visible=_SETTINGS["visible"],
+					max_attempts=_SETTINGS["attempts"],
+					export_csv=_SETTINGS["export_csv"],
+					export_jsonl=_SETTINGS["export_jsonl"],
+					webhook_url=_get_webhook_url(config),
+					encryption_password=_get_encryption_password(config),
+				)
 	except SystemExit:
 		pass
 	pause("Press Enter to return to the menu...")
@@ -968,7 +1148,8 @@ def _action_view_credentials(config):
 	"""
 	import json
 
-	folder = "./credentials"
+	from utilities.fs import CREDENTIALS_DIR
+	folder = CREDENTIALS_DIR
 	if not os.path.isdir(folder):
 		p_print("No credentials folder found.", Colours.WARNING)
 		pause()
@@ -983,16 +1164,39 @@ def _action_view_credentials(config):
 	_show_passwords = False
 	_selected = 0
 	_filter = ""
+	_regex_mode = False
+
+	def _preload():
+		data = {}
+		for f in json_files:
+			path = os.path.join(folder, f)
+			try:
+				with open(path, "r", encoding="utf-8") as fh:
+					data[f] = (json.load(fh), path)
+			except (json.JSONDecodeError, OSError):
+				data[f] = (None, path)
+		return data
+
+	_file_data = _preload()
 
 	while True:
 		# Filter files by email, notes, or tags
 		filtered = json_files
 		if _filter:
-			fl = _filter.lower()
-			filtered = [f for f in json_files if fl in f.lower()]
+			if _regex_mode:
+				import re as _re
+				try:
+					pat = _re.compile(_filter, _re.IGNORECASE)
+					filtered = [f for f in json_files if pat.search(f)]
+				except _re.error:
+					filtered = []
+			else:
+				fl = _filter.lower()
+				filtered = [f for f in json_files if fl in f.lower()]
 		separator(
 			f"Saved credentials ({len(filtered)}/{len(json_files)})"
 			f" {'[passwords shown]' if _show_passwords else ''}"
+			f" {'[regex]' if _regex_mode else ''}"
 			f" {'[filter: ' + _filter + ']' if _filter else ''}",
 			Colours.HEADER,
 		)
@@ -1002,11 +1206,8 @@ def _action_view_credentials(config):
 				Colours.WARNING,
 			)
 		for idx, f in enumerate(filtered):
-			path = os.path.join(folder, f)
-			try:
-				with open(path, "r", encoding="utf-8") as fh:
-					data = json.load(fh)
-			except (json.JSONDecodeError, OSError):
+			data, path = _file_data.get(f, (None, os.path.join(folder, f)))
+			if data is None:
 				p_print(f"  ! {f} (unreadable)", Colours.WARNING)
 				continue
 			email = data.get("email", "?")
@@ -1036,8 +1237,8 @@ def _action_view_credentials(config):
 				Colours.OKGREEN if idx == _selected else Colours.OKCYAN,
 			)
 		p_print(
-			"  [p] reveal  [c] copy email  [C] copy pw  [d] delete"
-			"  [n] notes  [t] tag  [/] search  [Esc] clear  [q] back",
+			"  [p] reveal  [c] copy email  [C] copy pw  [d] delete  [n] notes"
+			"  [t] tag  [/] search  [r] regex  [Esc] clear  [q] back",
 			Colours.WARNING,
 		)
 		key = input().strip().lower()
@@ -1055,40 +1256,45 @@ def _action_view_credentials(config):
 			_selected = 0
 		elif key == "n" and filtered:
 			target = filtered[_selected]
-			path = os.path.join(folder, target)
-			try:
-				with open(path, "r", encoding="utf-8") as fh:
-					data = json.load(fh)
+			data, path = _file_data.get(target, (None, os.path.join(folder, target)))
+			if data is not None:
 				cur_notes = data.get("notes", "")
 				new_notes = prompt_text(f"Notes for {target}", default=cur_notes)
 				if new_notes is not None:
 					data["notes"] = new_notes
-					with open(path, "w", encoding="utf-8") as fh:
-						json.dump(data, fh, indent=2)
-			except (OSError, json.JSONDecodeError) as e:
-				p_print(f"Failed to update notes: {e}", Colours.FAIL)
+					try:
+						with open(path, "w", encoding="utf-8") as fh:
+							json.dump(data, fh, indent=2)
+						_file_data[target] = (data, path)
+					except (OSError, json.JSONDecodeError) as e:
+						p_print(f"Failed to update notes: {e}", Colours.FAIL)
+			else:
+				p_print(f"  ! {target} (unreadable)", Colours.WARNING)
 		elif key == "t" and filtered:
 			target = filtered[_selected]
-			path = os.path.join(folder, target)
-			try:
-				with open(path, "r", encoding="utf-8") as fh:
-					data = json.load(fh)
+			data, path = _file_data.get(target, (None, os.path.join(folder, target)))
+			if data is not None:
 				cur_tags = data.get("tags", "")
 				new_tags = prompt_text(
 					f"Tags for {target} (comma-separated)", default=cur_tags
 				)
 				if new_tags is not None:
 					data["tags"] = new_tags
-					with open(path, "w", encoding="utf-8") as fh:
-						json.dump(data, fh, indent=2)
-			except (OSError, json.JSONDecodeError) as e:
-				p_print(f"Failed to update tags: {e}", Colours.FAIL)
+					try:
+						with open(path, "w", encoding="utf-8") as fh:
+							json.dump(data, fh, indent=2)
+						_file_data[target] = (data, path)
+					except (OSError, json.JSONDecodeError) as e:
+						p_print(f"Failed to update tags: {e}", Colours.FAIL)
+			else:
+				p_print(f"  ! {target} (unreadable)", Colours.WARNING)
 		elif key == "d" and filtered:
 			target = filtered[_selected]
 			if prompt_yes_no(f"Delete {target}? (cannot undo)"):
 				try:
 					os.remove(os.path.join(folder, target))
 					p_print(f"Deleted {target}", Colours.OKGREEN)
+					_file_data.pop(target, None)
 					json_files.remove(target)
 					filtered.remove(target)
 					if _selected >= len(filtered):
@@ -1107,36 +1313,23 @@ def _action_view_credentials(config):
 			json_files = [f for f in json_files if f not in filtered]
 			filtered = []
 			_selected = 0
+		elif key == "r":
+			_regex_mode = not _regex_mode
+			p_print(
+				f"Regex search: {'ON' if _regex_mode else 'OFF'}",
+				Colours.OKGREEN if _regex_mode else Colours.WARNING,
+			)
 		elif key in ("c", "C") and filtered:
 			if _HAS_CLIPBOARD:
 				try:
-					path = os.path.join(folder, filtered[_selected])
-					with open(path, "r", encoding="utf-8") as fh:
-						data = json.load(fh)
-					_pyperclip.copy(data.get("email", ""))
-					p_print("Email copied to clipboard!", Colours.OKGREEN)
+					data, _ = _file_data.get(filtered[_selected], (None, None))
+					if data is not None:
+						_pyperclip.copy(data.get("email" if key == "c" else "password", ""))
+						p_print(f"{'Email' if key == 'c' else 'Password'} copied to clipboard!", Colours.OKGREEN)
+					else:
+						p_print("Credential unreadable.", Colours.WARNING)
 				except Exception as e:
 					p_print(f"Clipboard error: {e}", Colours.FAIL)
-			else:
-				p_print(
-					"pyperclip not installed. Run: pip install pyperclip",
-					Colours.WARNING,
-				)
-		elif key == "C" and filtered:
-			if _HAS_CLIPBOARD:
-				try:
-					path = os.path.join(folder, filtered[_selected])
-					with open(path, "r", encoding="utf-8") as fh:
-						data = json.load(fh)
-					_pyperclip.copy(data.get("password", ""))
-					p_print("Password copied to clipboard!", Colours.OKGREEN)
-				except Exception as e:
-					p_print(f"Clipboard error: {e}", Colours.FAIL)
-			else:
-				p_print(
-					"pyperclip not installed. Run: pip install pyperclip",
-					Colours.WARNING,
-				)
 		elif key in ("j", "down") and filtered:
 			_selected = (_selected + 1) % len(filtered)
 		elif key in ("k", "up") and filtered:
@@ -1148,13 +1341,24 @@ def _action_view_credentials(config):
 
 def _action_export(config):
 	"""Export saved credentials to a flat file."""
-	if os.path.exists("credentials.txt") and not prompt_yes_no(
+	from utilities.fs import CREDENTIALS_TXT
+	if os.path.exists(CREDENTIALS_TXT) and not prompt_yes_no(
 		"credentials.txt already exists. Overwrite?"
 	):
 		return
 	p_print("Exporting credentials ...", Colours.HEADER)
 	extract_credentials(config.accountFormat)
 	pause("Press Enter to return to the menu...")
+
+
+def _storage_bar(quota_gb: float, width: int = 20) -> str:
+	"""Render a simple ASCII bar showing storage usage vs 20 GB free tier."""
+	full = 20.0  # MEGA free tier is 20 GB
+	fraction = min(quota_gb / full, 1.0)
+	filled = int(fraction * width)
+	empty = width - filled
+	bar = "\033[92m" + "█" * filled + "\033[90m" + "░" * empty + "\033[0m"
+	return bar
 
 
 def _action_storage(config, json_output=False):
@@ -1175,6 +1379,8 @@ def _action_storage(config, json_output=False):
 	from mega import Mega
 	import datetime
 
+	from concurrent.futures import ThreadPoolExecutor as _TPE
+
 	alive = 0
 	dead = 0
 	results = []
@@ -1183,37 +1389,55 @@ def _action_storage(config, json_output=False):
 			"Health dashboard — querying storage for each account...", Colours.HEADER
 		)
 
-	for _fname, creds, _mtime in creds_list:
+	def _check_one(_fname, creds, _mtime):
 		age = datetime.datetime.now() - datetime.datetime.fromtimestamp(_mtime)
 		days = age.days
 		entry = {"email": creds.email, "age_days": days, "tags": creds.tags or ""}
+		if creds.lastLogin:
+			last_login_dt = datetime.datetime.fromtimestamp(creds.lastLogin)
+			login_age = (datetime.datetime.now() - last_login_dt).days
+			login_str = f"{login_age}d ago" if login_age < 365 else ">1y ago"
+		else:
+			login_str = "never"
 		try:
 			mega = Mega()
 			mega.login(creds.email, creds.password)
-			quota = mega.get_quota() / 1024  # get_quota() returns MB → convert to GB
+			quota = mega.get_quota() / 1024
 			entry["status"] = "alive"
 			entry["quota_gb"] = round(quota, 2)
-			if json_output:
-				results.append(entry)
-			else:
-				tag_str = f" [{creds.tags}]" if creds.tags else ""
+			if not json_output:
+				_tag_str = f" [{creds.tags}]" if creds.tags else ""
 				p_print(
-					f"  {'✓':>3} {creds.email:<35} {quota:>5.1f} GB  {days:>3}d old"
-					f"{tag_str}",
+					f"  {'✓':>3} {creds.email:<35} {quota:>5.1f} GB {_storage_bar(quota, 20)} {days:>3}d old"
+					f" ll:{login_str}{_tag_str}",
 					Colours.OKGREEN,
 				)
-			alive += 1
+			return entry, "alive"
 		except Exception:
 			entry["status"] = "dead"
 			entry["quota_gb"] = 0
-			if json_output:
-				results.append(entry)
-			else:
-				tag_str = f" [{creds.tags}]" if creds.tags else ""
+			if not json_output:
+				_tag_str = f" [{creds.tags}]" if creds.tags else ""
 				p_print(
-					f"  {'✗':>3} {creds.email:<35} {'DEAD':>8}  {days:>3}d old{tag_str}",
+					f"  {'✗':>3} {creds.email:<35} {'DEAD':>8}  {days:>3}d old"
+					f" ll:{login_str}{_tag_str}",
 					Colours.FAIL,
 				)
+			return entry, "dead"
+
+	with _TPE(max_workers=min(20, max(5, len(creds_list)))) as pool:
+		futures = [
+			pool.submit(_check_one, _fname, creds, _mtime)
+			for _fname, creds, _mtime in creds_list
+		]
+		entries = [f.result() for f in futures]
+
+	for entry, status in entries:
+		if json_output:
+			results.append(entry)
+		if status == "alive":
+			alive += 1
+		else:
 			dead += 1
 
 	if json_output:
@@ -1237,8 +1461,8 @@ def _action_storage(config, json_output=False):
 			f"Summary: {alive} alive / {dead} dead / {len(creds_list)} total",
 			Colours.HEADER,
 		)
-	pause("Press Enter to return to the menu...")
-
+	if not json_output:
+		pause("Press Enter to return to the menu...")
 
 def _action_keepalive(config):
 	"""Keep all saved accounts alive."""
@@ -1359,6 +1583,8 @@ def _pick_credentials(
 					visible=_SETTINGS["visible"],
 					max_attempts=_SETTINGS["attempts"],
 					export_csv=_SETTINGS["export_csv"],
+					export_jsonl=_SETTINGS["export_jsonl"],
+					webhook_url=_get_webhook_url(config),
 				)
 			)
 		except SystemExit:
@@ -1397,8 +1623,14 @@ def _action_upload_dir(executable_path, config):
 	creds = _pick_credentials(executable_path, config)
 	if creds is None:
 		return
+	try:
+		mega = get_mega_session(creds)
+	except Exception as e:
+		p_print(f"Login failed for {creds.email}: {e}", Colours.FAIL)
+		pause("Press Enter to return to the menu...")
+		return
 	for f in files:
-		upload_file(public, f, creds)
+		_upload_with_session(public, f, mega)
 	pause("Press Enter to return to the menu...")
 
 
@@ -1455,6 +1687,11 @@ def _build_settings_menu():
 			value=lambda: "Yes" if _SETTINGS["export_jsonl"] else "No",
 		),
 		MenuItem(
+			"Generate Password",
+			_action_generate_password,
+			"Create a random strong password",
+		),
+		MenuItem(
 			"Edit Config",
 			lambda: _action_edit_config("", None),
 			"executablePath, accountFormat, proxy",
@@ -1480,6 +1717,146 @@ def _toggle(key):
 	_SETTINGS[key] = not _SETTINGS[key]
 	_save_settings()
 	pause("Press Enter to return to the menu...")
+
+
+def _action_generate_password():
+	"""Generate a random strong password and optionally copy to clipboard."""
+	from utilities.password_strength import generate_password, strength_label
+	length = prompt_int("Password length", default=20, minimum=8, maximum=128)
+	pw = generate_password(length)
+	_label, _colour = strength_label(pw)
+	p_print(f"Generated password ({_label}): {pw}", Colours.OKGREEN)
+	if prompt_yes_no("Copy to clipboard?"):
+		try:
+			import pyperclip as _pc
+			_pc.copy(pw)
+			p_print("Copied!", Colours.OKGREEN)
+		except (ImportError, Exception) as e:
+			p_print(f"Clipboard unavailable: {e}", Colours.WARNING)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_export_bitwarden():
+	"""Export credentials in Bitwarden CSV format."""
+	from services.extract import export_bitwarden_csv
+	p_print("Exporting to Bitwarden CSV...", Colours.HEADER)
+	try:
+		export_bitwarden_csv()
+	except Exception as e:
+		p_print(f"Export failed: {e}", Colours.FAIL)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_export_onepassword():
+	"""Export credentials in 1Password CSV format."""
+	from services.extract import export_onepassword_csv
+	p_print("Exporting to 1Password CSV...", Colours.HEADER)
+	try:
+		export_onepassword_csv()
+	except Exception as e:
+		p_print(f"Export failed: {e}", Colours.FAIL)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_export_keepass():
+	"""Export credentials in KeePass CSV format."""
+	from services.extract import export_keepass_csv
+	p_print("Exporting to KeePass CSV...", Colours.HEADER)
+	try:
+		export_keepass_csv()
+	except Exception as e:
+		p_print(f"Export failed: {e}", Colours.FAIL)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_delete_account(executable_path, config):
+	"""Delete a MEGA account and all its files."""
+	creds = _pick_credentials(executable_path, config)
+	if creds is None:
+		return
+	if not prompt_yes_no(f"Really delete {creds.email}? This CANNOT be undone."):
+		return
+	from services.account import delete_account
+	if delete_account(creds):
+		p_print(f"Account {creds.email} deleted.", Colours.OKGREEN)
+		fname = f"credentials/{creds.email.split('@')[0]}.json"
+		try:
+			os.remove(fname)
+			p_print(f"Credential file removed: {fname}", Colours.OKGREEN)
+		except OSError:
+			pass
+	else:
+		p_print(f"Failed to delete {creds.email}.", Colours.FAIL)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_change_password(executable_path, config):
+	"""Change password for a MEGA account."""
+	creds = _pick_credentials(executable_path, config)
+	if creds is None:
+		return
+	new_pw = prompt_text(f"New password for {creds.email}")
+	if not new_pw:
+		return
+	confirm = prompt_text("Confirm new password")
+	if new_pw != confirm:
+		p_print("Passwords do not match.", Colours.FAIL)
+		pause()
+		return
+	from services.account import change_password
+	if change_password(creds, new_pw):
+		fname = f"credentials/{creds.email.split('@')[0]}.json"
+		try:
+			import json
+			with open(fname, "r") as f:
+				data = json.load(f)
+			data["password"] = new_pw
+			with open(fname, "w") as f:
+				json.dump(data, f, indent=2)
+			p_print("Credential file updated.", Colours.OKGREEN)
+		except (OSError, json.JSONDecodeError) as e:
+			p_print(f"Could not update credential file: {e}", Colours.WARNING)
+	pause("Press Enter to return to the menu...")
+
+
+def _action_create_folder(executable_path, config):
+	"""Create a folder in a MEGA account."""
+	creds = _pick_credentials(executable_path, config)
+	if creds is None:
+		return
+	name = prompt_text("Folder name")
+	if not name:
+		return
+	from services.account import create_folder
+	create_folder(creds, name)
+	pause("Press Enter to return to the menu...")
+
+
+def _open_account_menu(executable_path, config):
+	"""Submenu for account management operations."""
+	while True:
+		items = [
+			MenuItem(
+				"Delete Account",
+				lambda: _action_delete_account(executable_path, config),
+				"Remove a MEGA account and all its files",
+			),
+			MenuItem(
+				"Change Password",
+				lambda: _action_change_password(executable_path, config),
+				"Set a new password for a MEGA account",
+			),
+			MenuItem(
+				"Create Folder",
+				lambda: _action_create_folder(executable_path, config),
+				"Create a folder in your MEGA cloud",
+			),
+			MenuItem("Back", lambda: _BACK, "Return to the main menu"),
+		]
+		menu = Menu("Account Management", items)
+		result = menu.run()
+		if result is _BACK:
+			break
 
 
 def _run_tui(executable_path, config):
@@ -1532,6 +1909,26 @@ def _run_tui(executable_path, config):
 				"List and download files from your MEGA account",
 			),
 			MenuItem(
+				"Account Management",
+				lambda: _open_account_menu(executable_path, config),
+				"Delete account, change password, create folder",
+			),
+			MenuItem(
+				"Export as Bitwarden CSV",
+				_action_export_bitwarden,
+				"Password-manager-compatible CSV format",
+			),
+			MenuItem(
+				"Export as 1Password CSV",
+				_action_export_onepassword,
+				"Password-manager-compatible CSV format",
+			),
+			MenuItem(
+				"Export as KeePass CSV",
+				_action_export_keepass,
+				"KeePass-compatible CSV format",
+			),
+			MenuItem(
 				"Settings",
 				lambda: _open_settings(),
 				"Attempts, visible mode, CSV export, config editor",
@@ -1562,18 +1959,11 @@ def _open_settings():
 def _sigint_handler(signum, frame):
 	"""Graceful Ctrl+C: don't dump a traceback, just exit cleanly."""
 	p_print("\nInterrupted. Exiting...", Colours.WARNING)
-	# Use os._exit() instead of sys.exit() to bypass asyncio cleanup
-	# issues (e.g. "This event loop is already running") when pressed
-	# inside parallel / loop mode.
-	import os as _os
-
-	_os._exit(0)
+	sys.exit(0)
 
 
 def _loop_keepalive(verbose: bool, prune: bool, interval_hours: float):
 	"""Run keepalive in a loop every ``interval_hours``."""
-	import time as _time
-
 	interval_secs = interval_hours * 3600
 	p_print(
 		f"Keepalive loop: every {interval_hours:.1f}h (Ctrl+C to stop).",
@@ -1582,7 +1972,7 @@ def _loop_keepalive(verbose: bool, prune: bool, interval_hours: float):
 	while True:
 		keepalive(verbose, prune=prune)
 		separator(f"Next run in {interval_hours:.1f}h", Colours.WARNING)
-		_time.sleep(interval_secs)
+		time.sleep(interval_secs)
 
 
 def _setup_signal_handlers():
@@ -1599,12 +1989,18 @@ _proxy_manager = ProxyManager(
 	proxy_file=console_args.proxy_file,
 	per_attempt=console_args.proxy_per_attempt,
 )
+if console_args.proxy_url and not _proxy_manager.active:
+	_proxy_manager.fetch_and_add(console_args.proxy_url)
 
 if __name__ == "__main__":
 	set_verbose(console_args.verbose)
-	auto_update()
+	import threading as _th
+	_t = _th.Thread(target=auto_update, daemon=True)
+	_t.start()
+	_t.join(timeout=5)
 
 	executable_path, config = setup()
+	set_quiet(config.quiet if config else console_args.quiet)
 	if not executable_path:
 		p_print("Failed while setting up!", Colours.FAIL)
 		sys.exit(1)
@@ -1616,8 +2012,6 @@ if __name__ == "__main__":
 		_action_storage(config, json_output=console_args.json)
 		sys.exit(0)
 	elif console_args.list_cloud:
-		from services.download import _action_browse_cloud
-
 		_action_browse_cloud(executable_path, config)
 	elif console_args.download_cloud:
 		from services.download import download_file, list_files
@@ -1648,6 +2042,15 @@ if __name__ == "__main__":
 	elif console_args.extract:
 		p_print("Extracting credentials to credentials.txt ...", Colours.HEADER)
 		extract_credentials(config.accountFormat)
+	elif console_args.export_keepass:
+		from services.extract import export_keepass_csv
+		export_keepass_csv()
+	elif console_args.export_bitwarden:
+		from services.extract import export_bitwarden_csv
+		export_bitwarden_csv()
+	elif console_args.export_onepassword:
+		from services.extract import export_onepassword_csv
+		export_onepassword_csv()
 	elif console_args.keepalive:
 		p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)
 		if console_args.interval > 0:
@@ -1666,7 +2069,10 @@ if __name__ == "__main__":
 				visible=console_args.visible,
 				max_attempts=console_args.attempts,
 				export_csv=console_args.export_csv,
+				export_jsonl=console_args.export_jsonl,
 				provider_name=console_args.provider,
+				webhook_url=console_args.webhook_url,
+				encryption_password=console_args.encryption_password,
 			)
 		else:
 			loop_registrations(
@@ -1676,8 +2082,11 @@ if __name__ == "__main__":
 				console_args.visible,
 				console_args.attempts,
 				console_args.export_csv,
+				export_jsonl=console_args.export_jsonl,
 				resume=console_args.resume,
 				provider_name=console_args.provider,
+				webhook_url=console_args.webhook_url,
+				encryption_password=console_args.encryption_password,
 			)
 	elif any(
 		[
@@ -1699,7 +2108,9 @@ if __name__ == "__main__":
 				visible=console_args.visible,
 				max_attempts=console_args.attempts,
 				export_csv=console_args.export_csv,
+				export_jsonl=console_args.export_jsonl,
 				provider_name=console_args.provider,
+				webhook_url=console_args.webhook_url,
 			)
 		)
 	else:

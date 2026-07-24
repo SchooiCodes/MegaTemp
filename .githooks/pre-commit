@@ -6,3 +6,6 @@ ruff check .
 
 echo "==> Running ruff format check..."
 ruff format --check .
+
+echo "==> Checking Python imports..."
+python -c "from utilities.exceptions import MegaTempError, RegistrationError, ConfigError, CredentialError, ProxyError, EmailProviderError, BrowserError, APIError, AccountError; print('Custom exceptions OK')"

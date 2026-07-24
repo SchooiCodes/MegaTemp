@@ -4,8 +4,6 @@ import os
 import threading
 import time
 
-from mega import Mega
-
 from utilities.etc import Credentials, p_print, Colours, status_line, clear_status_line
 from utilities.retry import retry
 
@@ -29,19 +27,15 @@ def _format_eta(seconds: float) -> str:
 
 
 def _upload_with_progress(mega, file: str):
-	"""Wrapper around mega.upload showing real-time progress with speed & ETA."""
+	"""Wrapper around mega.upload showing upload status."""
 	result = [None]
 	error = [None]
-	total = os.path.getsize(file)
-	progress = [0]  # shared state: bytes uploaded (updated via callback)
-
-	def _progress(bytes_up, _total):
-		progress[0] = bytes_up
+	start = [time.time()]
 
 	def _do_upload():
 		try:
 			result[0] = retry(label="mega.upload", max_attempts=2)(mega.upload)(
-				file, progress_callback=_progress
+				file
 			)
 		except Exception as e:
 			error[0] = e
@@ -49,35 +43,13 @@ def _upload_with_progress(mega, file: str):
 	thread = threading.Thread(target=_do_upload, daemon=True)
 	thread.start()
 
-	start = time.time()
-	timeout = max(total // 50000, 30)  # at least 30s, scales with file size
-
 	while thread.is_alive():
-		elapsed = time.time() - start
-		if elapsed > timeout:
-			error[0] = TimeoutError(
-				f"Upload timed out after {int(elapsed)}s ({total // 1024 // 1024} MiB)"
-			)
-			break
-
-		bytes_up = progress[0]
-		speed = bytes_up / elapsed if elapsed > 0 and bytes_up > 0 else 0
-		pct = bytes_up / total * 100 if total > 0 else 0
-		remaining = (total - bytes_up) / speed if speed > 0 else 0
-
-		bar_len = 20
-		filled = int(pct / 100 * bar_len)
-		bar = "█" * filled + "░" * (bar_len - filled)
-
-		mb_total = total / 1024 / 1024
-		speed_str = _format_speed(speed)
-		eta_str = _format_eta(remaining) if bytes_up > 0 else "starting..."
+		elapsed = time.time() - start[0]
 		status_line(
-			f"Uploading {os.path.basename(file)} [{bar}] {pct:.0f}% "
-			f"({mb_total:.1f} MiB @ {speed_str}, ETA {eta_str})",
+			f"Uploading {os.path.basename(file)}... ({int(elapsed)}s elapsed)",
 			Colours.OKCYAN,
 		)
-		time.sleep(0.25)
+		time.sleep(0.5)
 
 	clear_status_line()
 
@@ -91,18 +63,80 @@ def _upload_with_progress(mega, file: str):
 	return result[0]
 
 
-def upload_file(public: bool, file: str, credentials: Credentials):
+def upload_file(public: bool, file: str, credentials: Credentials) -> None:
 	"""Uploads a file to the account and optionally prints a share link."""
 
 	if not os.path.exists(file):
 		p_print(f"File not found: {file}", Colours.FAIL)
 		return
 
-	mega = Mega()
 	try:
-		retry(label="MEGA login", max_attempts=3)(mega.login)(
-			credentials.email, credentials.password
+		mega = get_mega_session(credentials)
+	except Exception as e:
+		p_print(f"Login failed for {credentials.email}: {e}", Colours.FAIL)
+		return
+
+	try:
+		file_size = os.path.getsize(file)
+		p_print(
+			f"Uploading {os.path.basename(file)} ({file_size / 1024 / 1024:.1f} MiB)...",
+			Colours.HEADER,
 		)
+		uploaded_file = _upload_with_progress(mega, file)
+	except Exception as e:
+		exc_name = type(e).__name__
+		msg = str(e) or "Unknown upload error"
+		p_print(f"Upload failed [{exc_name}]: {msg}", Colours.FAIL)
+		return
+
+	p_print("File uploaded successfully.", Colours.OKGREEN)
+
+	if public:
+		try:
+			link = mega.get_upload_link(uploaded_file)
+			p_print(f"Shareable link: {link}", Colours.OKGREEN)
+		except Exception as e:
+			p_print(f"Could not generate share link: {e}", Colours.WARNING)
+
+
+# Cache a single Mega() session per credentials set so directory uploads
+# don't pay a fresh login cost per file.
+_mega_sessions: dict[tuple[str, str], object] = {}
+_mega_sessions_lock = threading.Lock()
+
+
+def get_mega_session(credentials: Credentials) -> object:
+	"""Return a cached Mega() instance logged in with the given credentials.
+	Raises on login failure so callers can catch and act accordingly.
+	"""
+	key = (credentials.email, credentials.password)
+	if key not in _mega_sessions:
+		with _mega_sessions_lock:
+			if key not in _mega_sessions:
+				from mega import Mega
+				mega = Mega()
+				retry(label="MEGA login", max_attempts=3)(mega.login)(
+					credentials.email, credentials.password
+				)
+				_mega_sessions[key] = mega
+	return _mega_sessions[key]
+
+
+def _safe_mega_session(credentials: Credentials):
+	"""Return a Mega() instance or None if credentials don't authenticate."""
+	try:
+		return get_mega_session(credentials)
+	except Exception:
+		return None
+
+
+def _upload_with_session(public: bool, file: str, mega):
+	"""Upload a single file using an already-logged-in Mega() instance."""
+	if not os.path.exists(file):
+		p_print(f"File not found: {file}", Colours.FAIL)
+		return
+
+	try:
 		file_size = os.path.getsize(file)
 		p_print(
 			f"Uploading {os.path.basename(file)} ({file_size / 1024 / 1024:.1f} MiB)...",

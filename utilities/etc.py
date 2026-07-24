@@ -8,57 +8,62 @@ import subprocess
 from dataclasses import dataclass
 from urllib.request import urlopen, Request
 import sys
-from mega import Mega
 import psutil
 import contextvars
 from contextlib import contextmanager
 
 from utilities.models import Colours, Credentials
 
-VERSION = "v1.3.0"
+VERSION = "v1.4.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 
 
 def notify(title: str, message: str) -> None:
-	"""Show a desktop notification (best-effort, silent failure)."""
+	"""Show a desktop notification (best-effort, fire-and-forget)."""
+	if _QUIET:
+		return
 	import sys as _sys
 	import subprocess as _sp
+	import threading as _th
 
-	if _sys.platform == "linux":
+	def _fire():
 		try:
-			_sp.run(
-				["notify-send", title, message],
-				timeout=5,
-				capture_output=True,
-			)
+			if _sys.platform == "linux":
+				_sp.run(
+					["notify-send", title, message],
+					timeout=5,
+					capture_output=True,
+				)
+			elif _sys.platform == "darwin":
+				_sp.run(
+					[
+						"osascript",
+						"-e",
+						f'display notification "{message}" with title "{title}"',
+					],
+					timeout=5,
+					capture_output=True,
+				)
+			elif _sys.platform == "win32":
+				import ctypes as _ct
+				_ct.windll.user32.MessageBoxW(0, message, title, 0x40 | 0x1000)
 		except Exception:
 			pass
-	elif _sys.platform == "darwin":
-		try:
-			_sp.run(
-				[
-					"osascript",
-					"-e",
-					f'display notification "{message}" with title "{title}"',
-				],
-				timeout=5,
-				capture_output=True,
-			)
-		except Exception:
-			pass
-	elif _sys.platform == "win32":
-		try:
-			_sp.run(
-				[
-					"powershell",
-					"-Command",
-					f'New-BurntToastNotification -Text "{title}", "{message}"',
-				],
-				timeout=5,
-				capture_output=True,
-			)
-		except Exception:
-			pass
+
+	_th.Thread(target=_fire, daemon=True).start()
+
+
+def _find_tmp_lock_files(tmp_dir: str) -> list[str]:
+	"""Find crashpad lock files inside tmp_dir that may block deletion."""
+	matches = []
+	try:
+		for root, _dirs, files in os.walk(tmp_dir):
+			for f in files:
+				if f.endswith(".pma") or f.endswith(".lock") or "Crashpad" in f:
+					matches.append(os.path.join(root, f))
+	except OSError:
+		pass
+	return matches if matches else []
 
 
 def clear_tmp() -> bool:
@@ -68,18 +73,17 @@ def clear_tmp() -> bool:
 	Chrome's crashpad holds file locks) we kill the locking processes and
 	retry once. A missing tmp/ is treated as success.
 	"""
-	if not os.path.exists("tmp"):
+	tmp_dir = "tmp"
+	if not os.path.exists(tmp_dir):
 		return True
-
-	matches = ["CrashpadMetrics-active.pma", "CrashpadMetrics.pma"]
 
 	for attempt in range(2):
 		try:
-			shutil.rmtree("tmp")
+			shutil.rmtree(tmp_dir)
 			return True
 		except PermissionError:
 			if attempt == 0:
-				kill_process(matches)
+				kill_process(_find_tmp_lock_files(tmp_dir))
 			else:
 				p_print(
 					"Failed to clear tmp/ even after killing lock holders.",
@@ -147,13 +151,70 @@ class ProxyManager:
 			p_print(f"Failed to read proxy file {path}: {e}", Colours.FAIL)
 
 	@staticmethod
+	def fetch_from_url(url: str, timeout: int = 15) -> list[str]:
+		"""Fetch a proxy list from a URL (one proxy per line).
+
+		Supports plain-text lists and JSON arrays of proxy strings.
+		Returns a list of valid-looking proxy URLs.
+		"""
+		try:
+			import urllib.request as _ur
+			import json as _json
+			req = _ur.Request(url, headers={"User-Agent": "MegaTemp"})
+			with _ur.urlopen(req, timeout=timeout) as resp:
+				raw = resp.read().decode("utf-8", errors="replace")
+		except Exception as e:
+			p_print(f"Failed to fetch proxies from {url}: {e}", Colours.FAIL)
+			return []
+
+		proxies: list[str] = []
+		# Try JSON first (array of strings)
+		raw_stripped = raw.strip()
+		if raw_stripped.startswith("["):
+			try:
+				data = _json.loads(raw_stripped)
+				if isinstance(data, list):
+					for item in data:
+						if isinstance(item, str) and item.strip():
+							proxies.append(item.strip())
+				if proxies:
+					return proxies
+			except _json.JSONDecodeError:
+				pass
+
+		# Fall back to line-by-line parsing
+		for line in raw.splitlines():
+			line = line.strip()
+			if not line or line.startswith("#"):
+				continue
+			if ProxyManager._validate(line):
+				proxies.append(line)
+		return proxies
+
+	def fetch_and_add(self, url: str) -> int:
+		"""Fetch proxies from a URL and append them to the internal list."""
+		new_proxies = self.fetch_from_url(url)
+		self._proxies.extend(new_proxies)
+		if new_proxies:
+			p_print(f"Fetched {len(new_proxies)} proxies from {url}", Colours.OKCYAN)
+		return len(new_proxies)
+
+	@staticmethod
 	def _validate(proxy: str) -> bool:
-		"""Basic format validation. Accepts http://user:pass@host:port etc."""
 		if not proxy:
 			return False
 		if proxy.count("@") > 1:
 			return False
-		return True
+		from urllib.parse import urlparse
+		try:
+			parsed = urlparse(proxy)
+			if parsed.scheme not in ("http", "https", "socks4", "socks5", ""):
+				return False
+			if not parsed.hostname:
+				return False
+			return True
+		except Exception:
+			return False
 
 	def get_proxy(self) -> str | None:
 		"""Return the next proxy, or None if none are configured."""
@@ -172,6 +233,26 @@ class ProxyManager:
 	@property
 	def count(self) -> int:
 		return len(self._proxies)
+
+	def test_proxy(self, proxy: str, timeout: int = 10) -> bool:
+		"""Test a proxy by making a request through it to a reliable endpoint."""
+		try:
+			import urllib.request as _ur
+			req = _ur.Request("http://httpbin.org/ip", headers={"User-Agent": "MegaTemp"})
+			handler = _ur.ProxyHandler({"http": proxy, "https": proxy})
+			opener = _ur.build_opener(handler)
+			resp = opener.open(req, timeout=timeout)
+			return resp.status == 200
+		except Exception:
+			return False
+
+	def test_all(self, timeout: int = 10) -> list[tuple[str, bool]]:
+		"""Test all loaded proxies and return (proxy, ok) pairs."""
+		results = []
+		for p in self._proxies:
+			ok = self.test_proxy(p, timeout=timeout)
+			results.append((p, ok))
+		return results
 
 	def distribute(self, worker_count: int) -> list[str | None]:
 		"""Return one proxy per worker (round-robin). Missing = None."""
@@ -221,8 +302,21 @@ def auto_update() -> None:
 
 	# Download
 	url = f"https://github.com/SchooiCodes/MegaTemp/releases/download/{latest}/{asset}"
+	checksum_url = url + ".sha256"
 	download_path = sys.executable + ".new"
 	p_print(f"Downloading {asset} ({latest}) ...", Colours.HEADER)
+
+	# Fetch expected SHA256 checksum (best-effort)
+	expected_hash: str | None = None
+	try:
+		creq = Request(checksum_url, headers={"User-Agent": "MegaTemp"})
+		with urlopen(creq, timeout=15) as cresp:
+			cdata = cresp.read().decode("utf-8", errors="replace").strip()
+			# Format: "sha256hash  filename"
+			expected_hash = cdata.split()[0] if cdata else None
+	except Exception:
+		pass
+
 	try:
 		req = Request(url, headers={"User-Agent": "MegaTemp"})
 		with urlopen(req, timeout=180) as resp:
@@ -250,6 +344,29 @@ def auto_update() -> None:
 
 	os.chmod(download_path, 0o755)
 
+	# Verify SHA256 checksum if available.
+	if expected_hash:
+		import hashlib as _hl
+		actual_hash = _hl.sha256()
+		with open(download_path, "rb") as _fh:
+			while True:
+				chunk = _fh.read(65536)
+				if not chunk:
+					break
+				actual_hash.update(chunk)
+		if actual_hash.hexdigest() != expected_hash:
+			p_print(
+				f"SHA256 mismatch! Expected {expected_hash}, "
+				f"got {actual_hash.hexdigest()}. Aborting update.",
+				Colours.FAIL,
+			)
+			try:
+				os.remove(download_path)
+			except Exception:
+				pass
+			return
+		p_print("SHA256 checksum verified.", Colours.OKGREEN)
+
 	# Atomic replace: rename current exe to .old, new to current path.
 	old_path = sys.executable + ".old"
 	exe_path = sys.executable
@@ -276,15 +393,15 @@ def auto_update() -> None:
 	sys.exit(0)
 
 
-def delete_default(credentials: Credentials):
+def delete_default(credentials: Credentials) -> None:
 	"""Deletes the default welcome file.
 
 	The default account has no welcome file (or the mega.py library call
 	fails), so guard every step and treat "nothing to delete" as success.
 	"""
-	mega = Mega()
+	from services.upload import get_mega_session
 	try:
-		mega.login(credentials.email, credentials.password)
+		mega = get_mega_session(credentials)
 	except Exception:
 		return
 	try:
@@ -297,20 +414,20 @@ def delete_default(credentials: Credentials):
 		return
 
 
-def reinstall_tenacity():
+def reinstall_tenacity() -> None:
 	"""Reinstalls tenacity because of a dependency problem within the mega.py library."""
 	try:
 		p_print("Reinstalling tenacity...", Colours.WARNING)
 		pip = os.path.join(os.path.dirname(sys.executable), "pip")
 		if not os.path.exists(pip):
 			pip = "pip"
-		ret = os.system(f"{pip} uninstall tenacity -y")
+		ret = subprocess.run([pip, "uninstall", "tenacity", "-y"], capture_output=True).returncode
 		if ret != 0:
 			p_print(
 				"Failed to uninstall old tenacity, continuing anyway...",
 				Colours.WARNING,
 			)
-		ret = os.system(f"{pip} install tenacity")
+		ret = subprocess.run([pip, "install", "tenacity"], capture_output=True).returncode
 		if ret != 0:
 			p_print("Failed to install tenacity.", Colours.FAIL)
 			sys.exit(1)
@@ -324,7 +441,7 @@ def reinstall_tenacity():
 		sys.exit(1)
 
 
-def kill_process(matches: list):
+def kill_process(matches: list) -> None:
 	"""Kills processes holding files whose path contains one of `matches`.
 
 	Used to release Chrome's crashpad lock files before clearing tmp. Never
@@ -355,6 +472,17 @@ def kill_process(matches: list):
 		p_print("No matching processes to kill.", Colours.OKCYAN)
 
 
+# ── Quiet mode ────────────────────────────────────────────────────────
+# When set, p_print() / separator() only show WARNING/FAIL messages.
+_QUIET = False
+
+
+def set_quiet(value: bool) -> None:
+	"""Enable/disable quiet mode (suppresses non-essential output)."""
+	global _QUIET
+	_QUIET = value
+
+
 # ── Per-task print buffering ──────────────────────────────────────────
 # When set, p_print() / separator() capture output into this list
 # instead of printing immediately.  Workers flush atomically so
@@ -366,6 +494,8 @@ _print_buffer: contextvars.ContextVar[list | None] = contextvars.ContextVar(
 
 def _capture_or_print(text: str, colour: str) -> None:
 	"""Write *text* to the per-task buffer, or print directly."""
+	if _QUIET and colour not in (Colours.FAIL, Colours.WARNING):
+		return
 	buf = _print_buffer.get()
 	if buf is not None:
 		buf.append((text, colour))
@@ -406,20 +536,12 @@ def capture_worker_output() -> list:
 # ── Print ─────────────────────────────────────────────────────────────
 
 
-def p_print(
-	text,
-	colour,
-):
+def p_print(text: str, colour: str = Colours.OKGREEN) -> None:
 	"""Prints text in colour, or buffers it under a PrintCollector."""
 	_capture_or_print(text, colour)
 
 
-def clear_console():
-	"""Clears console."""
-	os.system("cls" if os.name == "nt" else "clear")
-
-
-def separator(title: str = "", colour: str = Colours.HEADER, width: int = 60):
+def separator(title: str = "", colour: str = Colours.HEADER, width: int = 60) -> None:
 	"""Prints a horizontal rule, optionally with a centered title.
 
 	Used to visually break the output into scannable phases, e.g.
@@ -436,7 +558,36 @@ def separator(title: str = "", colour: str = Colours.HEADER, width: int = 60):
 	_capture_or_print(line, colour)
 
 
-def status_line(text: str, colour: str = Colours.OKCYAN):
+def send_webhook(url: str, event: str, data: dict) -> None:
+	"""POST a JSON payload to a webhook URL (best-effort, silent failure)."""
+	if _QUIET:
+		return
+	if not url:
+		return
+	try:
+		import urllib.request as _ur
+		import json as _json
+		payload = _json.dumps({"event": event, "data": data}).encode()
+		req = _ur.Request(
+			url,
+			data=payload,
+			headers={
+				"Content-Type": "application/json",
+				"User-Agent": "MegaTemp",
+			},
+		)
+		_ur.urlopen(req, timeout=10)
+	except Exception:
+		pass
+
+
+def clear_console() -> None:
+	"""Clears console using ANSI escape sequences."""
+	sys.stdout.write("\x1b[2J\x1b[H")
+	sys.stdout.flush()
+
+
+def status_line(text: str, colour: str = Colours.OKCYAN) -> None:
 	"""Overwrites the current terminal line in place (no newline).
 
 	Handy for high-frequency polling updates so we don't spam the scrollback.
@@ -447,7 +598,7 @@ def status_line(text: str, colour: str = Colours.OKCYAN):
 	sys.stdout.flush()
 
 
-def clear_status_line():
+def clear_status_line() -> None:
 	"""Clears the in-place status line and moves to a fresh line."""
 	sys.stdout.write("\r\033[K")
 	sys.stdout.flush()

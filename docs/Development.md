@@ -11,7 +11,7 @@ MegaTemp/
 ├── MegaTemp.spec           # PyInstaller spec
 ├── Dockerfile              # Container build
 ├── docker-compose.yml      # Docker Compose with persistent volumes
-├── _test_full_e2e.py       # 97-test comprehensive test suite
+├── tests/                   # 163-test per-module test suite
 ├── services/
 │   ├── alive.py            # Keepalive service
 │   ├── upload.py           # File upload + public link + progress bar
@@ -59,7 +59,7 @@ All source files pass strict mypy checks.
 
 ```bash
 pip install pytest pytest-asyncio
-pytest _test_full_e2e.py -v
+pytest tests/ -v
 ```
 
 The test suite covers all modules (97 tests): models, fs, etc, menu,
@@ -119,12 +119,40 @@ The CI workflow `.github/workflows/build.yml` builds Linux/Windows/macOS
 artifacts automatically on every push and attaches them to GitHub Releases when
 a tag is pushed (`v*`).
 
+## Encryption
+
+`--encryption-password` / `config["encryptionPassword"]` encrypts saved passwords
+at rest using Fernet (from the `cryptography` package). If `cryptography` is not
+installed, a best-effort base64+XOR obfuscation is used instead with a warning.
+Credentials with encrypted fields carry the `ENC:` prefix (Fernet) or `OBS:`
+prefix (obfuscation) in the password/emailPassword fields. Decryption is
+automatic in `list_credentials()` and triggered by `decrypt_credential()`.
+
+## Custom Exceptions
+
+`utilities/exceptions/` defines a typed hierarchy: `MegaTempError` (base) →
+`RegistrationError`, `ConfigError`, `CredentialError`, `ProxyError`,
+`EmailProviderError`, `BrowserError`, `APIError`, `AccountError`. New code
+should raise and catch these instead of bare `Exception` where practical.
+
+## Webhooks
+
+`send_webhook(url, event, data)` POSTs a JSON payload `{"event": ..., "data": ...}`
+to the configured URL. Fired on `registration_success` and `registration_failed`.
+Best-effort with 10s timeout — errors are silently swallowed.
+
+## Config Profiles
+
+`--profile NAME` delegates to `set_config_profile()` in `fs.py`, which changes
+`_config_path()` from `config.json` to `config-{NAME}.json`. Each profile is a
+fully independent config file.
+
 ## Releasing
 
 Push a version tag to trigger an automated release:
 
 ```bash
-git tag v1.3.0
+git tag v1.4.0
 git push --tags
 ```
 
@@ -138,8 +166,8 @@ notes, and attaches:
 To update an existing tag to the current HEAD:
 
 ```bash
-git tag -f v1.3.0 HEAD
-git push origin v1.3.0 --force
+	git tag -f v1.4.0 HEAD
+	git push origin v1.4.0 --force
 ```
 
 > [!WARNING]

@@ -3,6 +3,78 @@
 All notable changes to MegaTemp are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [v1.4.0] - 2026-07-22
+
+### Added
+- **Credential encryption** — optional `--encryption-password` / config
+  `encryptionPassword` encrypts passwords at rest via Fernet (cryptography);
+  auto-decrypts in health dashboard, keepalive, and credential viewer.
+- **Webhooks** — `--webhook-url` CLI arg / config `webhookUrl`;
+  POSTs JSON payload on registration success (`registration_success`) and
+  failure (`registration_failed`).
+- **Proxy auto-fetch** — `--proxy-url URL` fetches proxy lists from remote
+  URLs (plain text or JSON array); `ProxyManager.fetch_from_url()` /
+  `fetch_and_add()`.
+- **Config profiles** — `--profile NAME` uses `config-{NAME}.json` instead of
+  `config.json`; `set_config_profile()` / `_config_path()` in fs.py.
+- **Provider fallback** — if all attempts with the primary email provider fail,
+  `register()` automatically falls back to the alternative provider.
+- **Account management** — `services/account.py` provides `delete_account()`,
+  `change_password()`, `create_folder()`; accessible from TUI "Account
+  Management" submenu.
+- **Password manager exports** — "Export as Bitwarden CSV",
+  "Export as 1Password CSV", and "Export as KeePass CSV" items
+  in TUI main menu; also `--export-bitwarden`, `--export-onepassword`,
+  `--export-keepass` CLI flags.
+- **Password generator** — Settings → Generate Password creates
+  cryptographically random passwords with configurable length.
+- **Storage visualization** — health dashboard shows ASCII bar (`████░░░`)
+  of used vs 20 GB free quota.
+- **Regex search** — `[r]` toggle in credentials viewer enables regex mode for
+  filter/search.
+- **Login timestamps** — `Credentials.lastLogin` tracks and displays last login
+  time in health dashboard.
+- **Quiet mode** — `--quiet` flag / config `quiet` suppresses non-essential
+  output for scripting; `set_quiet()`.
+- **Configurable mail timeout** — `--mail-timeout SECONDS` / config
+  `mailTimeout` controls how long to wait for MEGA confirmation emails.
+- **Coverage config** — `[tool.coverage*]` sections in `pyproject.toml`.
+- **KeePass CSV export** — Menu → *Export as KeePass CSV*, also
+  `--export-keepass` CLI flag.
+- **CLI export flags** — `--export-bitwarden`, `--export-onepassword`,
+  `--export-keepass` for headless export.
+- **Edge-case tests** — 9 new tests in `TestEdgeCases`, `TestKeePassExport`.
+  Total test count: ~155.
+
+### Changed
+- **Config schema bumped to v3** — v2→v3 migration adds `webhookUrl`,
+  `encryptionPassword` fields; `schemaVersion` default is now `3`.
+- **`os.system()` → `subprocess.run()`** — `reinstall_tenacity()` now uses
+  proper list-based subprocess calls instead of shell interpolation.
+- **`os.system("clear")` → ANSI escape codes** — `clear_console()` uses
+  `\x1b[2J\x1b[H` for cross-platform console clearing.
+- **Fresh `Mega()` per account in keepalive** — prevents stale session state
+  from leaking between accounts.
+- **Windows notifications** — replaced BurntToast PowerShell dependency with
+  native `ctypes.windll.user32.MessageBoxW`.
+- **pymailtm private API removal** — `web.py` no longer depends on pymailtm
+  internal methods; uses direct HTTP to `api.mail.tm`.
+- **Custom exception hierarchy** — `utilities/exceptions/` provides typed
+  exceptions: `MegaTempError`, `RegistrationError`, `ConfigError`, `APIError`,
+  `AccountError`, `BrowserError`, `ProxyError`, `EmailProviderError`.
+- **SHA256 checksum verification** — `auto_update()` downloads `.sha256` file
+  and verifies binary integrity before replacing the executable.
+- **Lazy `mega` imports** — moved all `from mega import Mega` into function
+  scope to avoid tenacity asyncio.coroutine crash on Python 3.14.
+- **All `register()` call sites** now pass `export_jsonl`, `webhook_url`,
+  `encryption_password` parameters.
+- **Tests: 140+** — added TestWebhook, TestProxyAutoFetch, TestConfigProfiles,
+  TestConfigMigrationV2, TestEncryption test classes. Updated schemaVersion
+  assertions from 2→3.
+
+### Removed
+- **Duplicate lazy import** of `_action_browse_cloud` in `main.py` line 1619.
+
 ## [v1.3.0] - 2026-07-21
 
 ### Added

@@ -46,3 +46,32 @@ Verified account.
 ```
 
 Each phase is prefixed with a `[tag]` so you can see exactly where a run stops.
+
+## Encrypted credentials not readable
+
+If you set `--encryption-password` (or config `encryptionPassword`) and later
+try to read credentials in the viewer, health dashboard, or keepalive, the
+system auto-detects encrypted fields and decrypts them transparently. If you
+**change** the password after saving encrypted credentials, the old ones will be
+unreadable — keep your encryption password consistent. Decryption errors
+produce clear "Failed to decrypt field" warnings rather than silent data loss.
+
+## Email provider fallback not working
+
+Provider fallback triggers automatically: if all attempts with the primary
+provider (e.g. `mailtm`) fail, `register()` switches to the alternative
+provider (`guerrillamail`). You can also force a specific provider with
+`--provider NAME`. Fallback is logged with "Switching to fallback provider."
+
+## Proxy auto-fetch returns no proxies
+
+`--proxy-url URL` expects a plain-text list (one proxy per line) or a JSON array
+of proxy strings. Empty lines and `#` comments in plain-text lists are skipped.
+If the URL is unreachable or the format is unexpected, a warning is printed and
+no proxies are added to the rotation.
+
+## Webhook not firing
+
+Webhooks are fire-and-forget with a 10-second timeout. If the target URL is
+unreachable, the error is silently swallowed. Verify the URL is correct and
+publicly accessible. The `--quiet` flag suppresses webhook POSTs.

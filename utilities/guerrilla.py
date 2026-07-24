@@ -1,5 +1,6 @@
 """Guerrilla Mail provider — no signup, no API key, free disposable emails."""
 
+import asyncio
 import json
 import urllib.request
 import urllib.parse
@@ -32,7 +33,7 @@ class GuerrillaMailProvider(EmailProvider):
 		- email = the full email address
 		- emailPassword = the sid_token (needed for session auth)
 		"""
-		data = _gm_call({"f": "get_email_address"})
+		data = await asyncio.to_thread(_gm_call, {"f": "get_email_address"})
 		email: str = data.get("email_addr", "")
 		sid: str = data.get("sid_token", "")
 		return Credentials(email=email, emailPassword=sid, password="")
@@ -44,12 +45,13 @@ class GuerrillaMailProvider(EmailProvider):
 		"""
 		email = credentials.email
 		local_part = email.split("@")[0]
-		data = _gm_call(
+		data = await asyncio.to_thread(
+			_gm_call,
 			{
 				"f": "set_email_user",
 				"email_user": local_part,
 				"sid_token": credentials.emailPassword,
-			}
+			},
 		)
 		return Mailbox(
 			provider=self.name,
@@ -63,14 +65,17 @@ class GuerrillaMailProvider(EmailProvider):
 		Raises LookupError if no unread messages are available.
 		"""
 		sid = mailbox.address
-		data = _gm_call({"f": "check_email", "seq": "0", "sid_token": sid})
+		data = await asyncio.to_thread(
+			_gm_call, {"f": "check_email", "seq": "0", "sid_token": sid}
+		)
 		emails = data.get("list", [])
 		if not emails:
 			raise LookupError("No messages")
 		# Return the newest message
 		msg = emails[0]
-		full = _gm_call(
-			{"f": "fetch_email", "email_id": msg["mail_id"], "sid_token": sid}
+		full = await asyncio.to_thread(
+			_gm_call,
+			{"f": "fetch_email", "email_id": msg["mail_id"], "sid_token": sid},
 		)
 		return {
 			"mail_id": full.get("mail_id"),

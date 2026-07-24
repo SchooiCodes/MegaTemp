@@ -24,13 +24,14 @@ class Credentials:
 	id: str = ""
 	notes: str = ""
 	tags: str = ""  # comma-separated tag list
+	lastLogin: float = 0.0  # unix timestamp of last successful login
 
 
 @dataclass
 class Config:
 	"""Config class."""
 
-	schemaVersion: int = 1
+	schemaVersion: int = 3
 	executablePath: str = ""
 	accountFormat: str = ""
 	proxy: str = ""
@@ -38,8 +39,13 @@ class Config:
 	proxyPerAttempt: bool = False
 	maxAttempts: int = 4
 	csvExport: bool = False
+	jsonlExport: bool = False
 	visibleBrowser: bool = False
 	emailProvider: str = "mailtm"
+	mailTimeout: int = 45
+	quiet: bool = False
+	webhookUrl: str = ""
+	encryptionPassword: str = ""
 
 	def __getitem__(self, key):
 		return self.__dict__[key]
@@ -61,6 +67,21 @@ _CONFIG_MIGRATIONS: dict[int, callable] = {
 			"csvExport": False,
 			"visibleBrowser": False,
 			"emailProvider": "mailtm",
+		}
+	),
+	1: lambda d: d.update(
+		{
+			"schemaVersion": 2,
+			"jsonlExport": False,
+			"mailTimeout": 45,
+			"quiet": False,
+		}
+	),
+	2: lambda d: d.update(
+		{
+			"schemaVersion": 3,
+			"webhookUrl": "",
+			"encryptionPassword": "",
 		}
 	),
 }
