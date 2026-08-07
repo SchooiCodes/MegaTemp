@@ -3,6 +3,13 @@ name: Build executable
 # Builds a standalone MegaTemp binary (no Python required to run) for Linux,
 # Windows and macOS using PyInstaller, and uploads them as workflow artifacts.
 # NOTE: a Chromium-based browser must still be installed on the target machine.
+#
+# Every non-PR build also re-uploads the binaries to a rolling release tagged
+# `latest`, so each OS build is always downloadable from a permanent static URL
+# (replaced in-place on every build):
+#   - https://github.com/SchooiCodes/MegaTemp/releases/download/latest/MegaTemp-windows.exe
+#   - https://github.com/SchooiCodes/MegaTemp/releases/download/latest/MegaTemp-linux
+#   - https://github.com/SchooiCodes/MegaTemp/releases/download/latest/MegaTemp-macos
 
 on:
   push:
@@ -74,6 +81,32 @@ jobs:
           cp "${{ matrix.binary }}" "dist/${{ matrix.artifact }}"
           gh release upload "${{ github.ref_name }}" \
             "dist/${{ matrix.artifact }}" --clobber
+      - name: Publish rolling build (static URL)
+        # Keeps a fresh copy of every OS build at a permanent download URL
+        # (see header comment) by re-uploading this job's binary to the
+        # `latest` release with --clobber. Skipped on pull requests.
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Create the rolling 'latest' release/tag on the first run; ignore
+          # "already exists" errors on every later run.
+          gh release create latest \
+            --title "Latest build" \
+            --notes "Rolling build, refreshed on every non-PR build." \
+            2>/dev/null || true
+          # Rename to the canonical asset name, then upload (replace) it so the
+          # static URL always serves the newest build. Retry on transient
+          # "already exists" races between parallel workflow runs.
+          cp "${{ matrix.binary }}" "dist/${{ matrix.artifact }}"
+          for attempt in 1 2 3; do
+            gh release upload latest "dist/${{ matrix.artifact }}" --clobber \
+              && break
+            gh release delete-asset latest "${{ matrix.artifact }}" -y 2>/dev/null || true
+            sleep 3
+          done
+
       - name: Upload source tarball (tag pushes only)
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest'
         shell: bash
