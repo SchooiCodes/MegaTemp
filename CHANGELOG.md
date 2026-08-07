@@ -3,7 +3,23 @@
 All notable changes to MegaTemp are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [v1.4.0] - 2026-07-22
+## [v1.5.0] - 2026-08-07
+
+### Added
+- **Faster uploads** — `Mega.upload` is monkey-patched to reuse a single
+  persistent `requests.Session` (keep-alive, no per-chunk TLS handshake) and to
+  POST chunks in parallel via a small `ThreadPoolExecutor`. Crypto (CTR payload
+  and the MEGA file MAC chain) is byte-for-byte identical to the stock
+  implementation, so uploaded files still verify on download.
+- **accounts.txt visibility** — `list_credentials()` and the credentials
+  viewer now also read `credentials/accounts.txt` (per the configured
+  `accountFormat`), so accounts saved as `email#password` lines are visible,
+  searchable, and deletable instead of showing "No saved credentials yet."
+- **mega_patch unit tests** — `tests/test_mega_patch.py` covers
+  `_fast_chunks` and verifies the patched upload reuses one session and emits
+  payloads identical to the stock crypto.
+
+
 
 ### Added
 - **Credential encryption** — optional `--encryption-password` / config

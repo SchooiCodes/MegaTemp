@@ -14,7 +14,7 @@ from contextlib import contextmanager
 
 from utilities.models import Colours, Credentials
 
-VERSION = "v1.4.0"
+VERSION = "v1.5.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 
 

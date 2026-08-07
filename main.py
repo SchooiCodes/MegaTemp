@@ -236,58 +236,22 @@ async def _launch_browser(kwargs: dict):
 	) from last_error
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument(
-	"-ka",
-	"--keepalive",
-	required=False,
-	action="store_true",
-	help="Logs into the accounts to keep them alive.",
+parser = argparse.ArgumentParser(
+	formatter_class=argparse.RawDescriptionHelpFormatter,
+	epilog=(
+		"Examples:\n"
+		"  python main.py                                    Interactive TUI\n"
+		"  python main.py --health --json                    Health dashboard (JSON)\n"
+		"  python main.py -l 10 --parallel 3                 Batch 10 accounts (3 workers)\n"
+		"  python main.py -f myfile.pdf -p                   Upload file with public link\n"
+		"  python main.py -ka --prune --interval 24          Keep alive loop every 24h\n"
+		"  python main.py --list-cloud                       List cloud files\n"
+		"  python main.py --export-bitwarden                 Bitwarden CSV export\n"
+	),
 )
-parser.add_argument(
-	"-e",
-	"--extract",
-	required=False,
-	action="store_true",
-	help="Extracts the credentials to a file.",
-)
-parser.add_argument(
-	"-v",
-	"--verbose",
-	required=False,
-	action="store_true",
-	help="Verbose logging (registration steps, mail addresses, keepalive storage).",
-)
-parser.add_argument(
-	"-f", "--file", required=False, help="Uploads a file to the account."
-)
-parser.add_argument(
-	"--upload-dir",
-	required=False,
-	help="Upload all files in a directory (non-recursive).",
-)
-parser.add_argument(
-	"-p",
-	"--public",
-	required=False,
-	action="store_true",
-	help="Generates a public link to the uploaded file, use with -f",
-)
-parser.add_argument(
-	"-l",
-	"--loop",
-	required=False,
-	help="Loops the program for a specified amount of times.",
-	type=int,
-)
-parser.add_argument(
-	"-sh",
-	"--visible",
-	required=False,
-	action="store_true",
-	help="Run Chromium in visible (non-headless) mode so you can watch it work.",
-)
-parser.add_argument(
+
+reg = parser.add_argument_group("Registration")
+reg.add_argument(
 	"-a",
 	"--attempts",
 	required=False,
@@ -295,81 +259,21 @@ parser.add_argument(
 	default=4,
 	help="Maximum registration attempts before giving up (default: 4).",
 )
-parser.add_argument(
-	"-csv",
-	"--export-csv",
+reg.add_argument(
+	"-ka",
+	"--keepalive",
 	required=False,
 	action="store_true",
-	help="Also export every saved account to credentials/accounts.csv.",
+	help="Logs into the accounts to keep them alive.",
 )
-parser.add_argument(
-	"--proxy",
+reg.add_argument(
+	"-l",
+	"--loop",
 	required=False,
-	default="",
-	help="Single proxy URL (e.g. http://user:pass@host:port).",
+	help="Loops the program for a specified amount of times.",
+	type=int,
 )
-parser.add_argument(
-	"--proxy-file",
-	required=False,
-	default="",
-	help="File with one proxy URL per line (rotation).",
-)
-parser.add_argument(
-	"--proxy-per-attempt",
-	required=False,
-	action="store_true",
-	help="Rotate proxy on every registration attempt (not just per batch).",
-)
-parser.add_argument(
-	"--proxy-url",
-	required=False,
-	default="",
-	help="URL to auto-fetch proxy list from (plain text or JSON array).",
-)
-parser.add_argument(
-	"--export-jsonl",
-	required=False,
-	action="store_true",
-	help="Also export every saved account to credentials/accounts.jsonl (JSON Lines).",
-)
-parser.add_argument(
-	"--export-bitwarden",
-	required=False,
-	action="store_true",
-	help="Export credentials in Bitwarden CSV format.",
-)
-parser.add_argument(
-	"--export-onepassword",
-	required=False,
-	action="store_true",
-	help="Export credentials in 1Password CSV format.",
-)
-parser.add_argument(
-	"--export-keepass",
-	required=False,
-	action="store_true",
-	help="Export credentials in KeePass CSV format.",
-)
-parser.add_argument(
-	"--prune",
-	required=False,
-	action="store_true",
-	help="When used with --keepalive, delete credential files for accounts that fail login.",
-)
-parser.add_argument(
-	"--interval",
-	required=False,
-	type=float,
-	default=0,
-	help="When used with --keepalive, loop continuously every N hours.",
-)
-parser.add_argument(
-	"--resume",
-	required=False,
-	action="store_true",
-	help="Resume an interrupted loop batch from the last checkpoint.",
-)
-parser.add_argument(
+reg.add_argument(
 	"-j",
 	"--parallel",
 	required=False,
@@ -378,81 +282,203 @@ parser.add_argument(
 	help="Number of parallel workers when using --loop. Default 1 (sequential). "
 	"Each worker gets its own browser and optionally a dedicated proxy.",
 )
-parser.add_argument(
-	"--list-cloud",
+reg.add_argument(
+	"--resume",
 	required=False,
 	action="store_true",
-	help="List files in the cloud for the most recent account.",
+	help="Resume an interrupted loop batch from the last checkpoint.",
 )
-parser.add_argument(
-	"--download-cloud",
-	required=False,
-	metavar="FILE_ID",
-	default="",
-	help="Download a file from cloud by its node ID (use --list-cloud to get IDs).",
-)
-parser.add_argument(
-	"--download-dest",
-	required=False,
-	metavar="DIR",
-	default=".",
-	help="Destination directory for --download-cloud (default: current dir).",
-)
-parser.add_argument(
-	"--version",
-	required=False,
-	action="store_true",
-	help="Show version and exit.",
-)
-parser.add_argument(
+reg.add_argument(
 	"--provider",
 	required=False,
 	metavar="NAME",
 	default=None,
 	help='Email provider: "mailtm" (default) or "guerrillamail".',
 )
-parser.add_argument(
-	"--health",
-	required=False,
-	action="store_true",
-	help="Show health dashboard (quota, age, status) for all saved accounts.",
-)
-parser.add_argument(
-	"--json",
-	required=False,
-	action="store_true",
-	help="Output health dashboard as JSON (use with --health).",
-)
-parser.add_argument(
-	"--quiet",
-	required=False,
-	action="store_true",
-	help="Suppress non-essential output for scripting.",
-)
-parser.add_argument(
-	"--profile",
-	required=False,
-	default="",
-	help="Config profile name (uses config-{name}.json instead of config.json).",
-)
-parser.add_argument(
+reg.add_argument(
 	"--mail-timeout",
 	required=False,
 	type=int,
 	default=120,
 	help="Seconds to wait for MEGA confirmation email (default: 120).",
 )
-parser.add_argument(
-	"--webhook-url",
+
+up = parser.add_argument_group("Upload")
+up.add_argument(
+	"-f", "--file", required=False, help="Uploads a file to the account."
+)
+up.add_argument(
+	"--upload-dir",
+	required=False,
+	help="Upload all files in a directory (non-recursive).",
+)
+up.add_argument(
+	"-p",
+	"--public",
+	required=False,
+	action="store_true",
+	help="Generates a public link to the uploaded file, use with -f",
+)
+
+cloud = parser.add_argument_group("Cloud")
+cloud.add_argument(
+	"--list-cloud",
+	required=False,
+	action="store_true",
+	help="List files in the cloud for the most recent account.",
+)
+cloud.add_argument(
+	"--download-cloud",
+	required=False,
+	metavar="FILE_ID",
+	default="",
+	help="Download a file from cloud by its node ID (use --list-cloud to get IDs).",
+)
+cloud.add_argument(
+	"--download-dest",
+	required=False,
+	metavar="DIR",
+	default=".",
+	help="Destination directory for --download-cloud (default: current dir).",
+)
+
+export_grp = parser.add_argument_group("Export")
+export_grp.add_argument(
+	"-csv",
+	"--export-csv",
+	required=False,
+	action="store_true",
+	help="Also export every saved account to credentials/accounts.csv.",
+)
+export_grp.add_argument(
+	"--export-jsonl",
+	required=False,
+	action="store_true",
+	help="Also export every saved account to credentials/accounts.jsonl (JSON Lines).",
+)
+export_grp.add_argument(
+	"--export-bitwarden",
+	required=False,
+	action="store_true",
+	help="Export credentials in Bitwarden CSV format.",
+)
+export_grp.add_argument(
+	"--export-onepassword",
+	required=False,
+	action="store_true",
+	help="Export credentials in 1Password CSV format.",
+)
+export_grp.add_argument(
+	"--export-keepass",
+	required=False,
+	action="store_true",
+	help="Export credentials in KeePass CSV format.",
+)
+export_grp.add_argument(
+	"-e",
+	"--extract",
+	required=False,
+	action="store_true",
+	help="Extracts the credentials to a file.",
+)
+
+proxy = parser.add_argument_group("Proxy")
+proxy.add_argument(
+	"--proxy",
 	required=False,
 	default="",
-	help="URL to POST JSON payload on registration success/failure.",
+	help="Single proxy URL (e.g. http://user:pass@host:port).",
 )
-parser.add_argument(
+proxy.add_argument(
+	"--proxy-file",
+	required=False,
+	default="",
+	help="File with one proxy URL per line (rotation).",
+)
+proxy.add_argument(
+	"--proxy-per-attempt",
+	required=False,
+	action="store_true",
+	help="Rotate proxy on every registration attempt (not just per batch).",
+)
+proxy.add_argument(
+	"--proxy-url",
+	required=False,
+	default="",
+	help="URL to auto-fetch proxy list from (plain text or JSON array).",
+)
+
+ka = parser.add_argument_group("Keepalive")
+ka.add_argument(
+	"--prune",
+	required=False,
+	action="store_true",
+	help="When used with --keepalive, delete credential files for accounts that fail login.",
+)
+ka.add_argument(
+	"--interval",
+	required=False,
+	type=float,
+	default=0,
+	help="When used with --keepalive, loop continuously every N hours.",
+)
+
+info = parser.add_argument_group("Info & Utility")
+info.add_argument(
+	"-v",
+	"--verbose",
+	required=False,
+	action="store_true",
+	help="Verbose logging (registration steps, mail addresses, keepalive storage).",
+)
+info.add_argument(
+	"--quiet",
+	required=False,
+	action="store_true",
+	help="Suppress non-essential output for scripting.",
+)
+info.add_argument(
+	"--version",
+	required=False,
+	action="store_true",
+	help="Show version and exit.",
+)
+info.add_argument(
+	"--health",
+	required=False,
+	action="store_true",
+	help="Show health dashboard (quota, age, status) for all saved accounts.",
+)
+info.add_argument(
+	"--json",
+	required=False,
+	action="store_true",
+	help="Output health dashboard as JSON (use with --health).",
+)
+info.add_argument(
+	"-sh",
+	"--visible",
+	required=False,
+	action="store_true",
+	help="Run Chromium in visible (non-headless) mode so you can watch it work.",
+)
+info.add_argument(
+	"--profile",
+	required=False,
+	default="",
+	help="Config profile name (uses config-{name}.json instead of config.json).",
+)
+info.add_argument(
 	"--encryption-password",
 	required=False,
 	default="",
 	help="Optional password to encrypt stored credentials at rest.",
+)
+info.add_argument(
+	"--webhook-url",
+	required=False,
+	default="",
+	help="URL to POST JSON payload on registration success/failure.",
 )
 
 console_args = parser.parse_args()
@@ -1145,18 +1171,53 @@ def _action_view_credentials(config):
 	  d  — delete the selected credential (after confirmation)
 	  j/k or up/down — navigate
 	  q  — return to menu
+
+	Accounts saved via accountFormat live in credentials/accounts.txt and
+	are merged into this list alongside per-account JSON files.
 	"""
 	import json
 
-	from utilities.fs import CREDENTIALS_DIR
+	from utilities.fs import (
+		CREDENTIALS_DIR,
+		read_accounts_txt,
+		remove_accounts_txt_line,
+	)
+
 	folder = CREDENTIALS_DIR
 	if not os.path.isdir(folder):
 		p_print("No credentials folder found.", Colours.WARNING)
 		pause()
 		return
 
-	json_files = sorted([f for f in os.listdir(folder) if f.endswith(".json")])
-	if not json_files:
+	def _load_entries():
+		loaded = []
+		seen = set()
+		for f in sorted(x for x in os.listdir(folder) if x.endswith(".json")):
+			path = os.path.join(folder, f)
+			try:
+				with open(path, "r", encoding="utf-8") as fh:
+					data = json.load(fh)
+			except (json.JSONDecodeError, OSError):
+				data = None
+			loaded.append({"key": f, "data": data, "path": path, "source": "json"})
+			if data:
+				seen.add(data.get("email"))
+		for name, creds, _mtime in read_accounts_txt(config.accountFormat):
+			if creds.email in seen:
+				continue
+			seen.add(creds.email)
+			loaded.append(
+				{
+					"key": name,
+					"data": creds.__dict__,
+					"path": os.path.join(folder, "accounts.txt"),
+					"source": "txt",
+				}
+			)
+		return loaded
+
+	entries = _load_entries()
+	if not entries:
 		p_print("No saved credentials yet.", Colours.WARNING)
 		pause()
 		return
@@ -1166,35 +1227,23 @@ def _action_view_credentials(config):
 	_filter = ""
 	_regex_mode = False
 
-	def _preload():
-		data = {}
-		for f in json_files:
-			path = os.path.join(folder, f)
-			try:
-				with open(path, "r", encoding="utf-8") as fh:
-					data[f] = (json.load(fh), path)
-			except (json.JSONDecodeError, OSError):
-				data[f] = (None, path)
-		return data
-
-	_file_data = _preload()
-
 	while True:
-		# Filter files by email, notes, or tags
-		filtered = json_files
+		# Filter entries by email, notes, or tags
+		filtered = entries
 		if _filter:
 			if _regex_mode:
 				import re as _re
+
 				try:
 					pat = _re.compile(_filter, _re.IGNORECASE)
-					filtered = [f for f in json_files if pat.search(f)]
+					filtered = [e for e in entries if pat.search(e["key"])]
 				except _re.error:
 					filtered = []
 			else:
 				fl = _filter.lower()
-				filtered = [f for f in json_files if fl in f.lower()]
+				filtered = [e for e in entries if fl in e["key"].lower()]
 		separator(
-			f"Saved credentials ({len(filtered)}/{len(json_files)})"
+			f"Saved credentials ({len(filtered)}/{len(entries)})"
 			f" {'[passwords shown]' if _show_passwords else ''}"
 			f" {'[regex]' if _regex_mode else ''}"
 			f" {'[filter: ' + _filter + ']' if _filter else ''}",
@@ -1205,10 +1254,10 @@ def _action_view_credentials(config):
 				f"  No accounts match '{_filter}'. Press [Esc] to clear filter.",
 				Colours.WARNING,
 			)
-		for idx, f in enumerate(filtered):
-			data, path = _file_data.get(f, (None, os.path.join(folder, f)))
+		for idx, e in enumerate(filtered):
+			data = e["data"]
 			if data is None:
-				p_print(f"  ! {f} (unreadable)", Colours.WARNING)
+				p_print(f"  ! {e['key']} (unreadable)", Colours.WARNING)
 				continue
 			email = data.get("email", "?")
 			if len(email) > 38:
@@ -1225,14 +1274,15 @@ def _action_view_credentials(config):
 
 				_label, _colour = strength_label(pw)
 				strength_info = f" {_colour}{_label}\033[0m"
-			size = os.path.getsize(path)
+			size = os.path.getsize(e["path"]) if e["source"] == "json" else None
+			size_str = f"{size}B" if size is not None else "accounts.txt"
 			tags_str = data.get("tags", "")
 			notes_str = data.get("notes", "")
 			tag_display = f" [{tags_str}]" if tags_str else ""
 			note_display = f" {notes_str[:20]}" if notes_str else ""
 			marker = ">" if idx == _selected else " "
 			p_print(
-				f" {marker} {email:<38} pw:{pw_display:<14} {size}B{tag_display}"
+				f" {marker} {email:<38} pw:{pw_display:<14} {size_str}{tag_display}"
 				f"{note_display}{strength_info}",
 				Colours.OKGREEN if idx == _selected else Colours.OKCYAN,
 			)
@@ -1256,61 +1306,71 @@ def _action_view_credentials(config):
 			_selected = 0
 		elif key == "n" and filtered:
 			target = filtered[_selected]
-			data, path = _file_data.get(target, (None, os.path.join(folder, target)))
-			if data is not None:
-				cur_notes = data.get("notes", "")
-				new_notes = prompt_text(f"Notes for {target}", default=cur_notes)
+			if target["source"] != "json":
+				p_print("Notes are only available for JSON-saved accounts.", Colours.WARNING)
+				continue
+			if target["data"] is not None:
+				cur_notes = target["data"].get("notes", "")
+				new_notes = prompt_text(f"Notes for {target['key']}", default=cur_notes)
 				if new_notes is not None:
-					data["notes"] = new_notes
+					target["data"]["notes"] = new_notes
 					try:
-						with open(path, "w", encoding="utf-8") as fh:
-							json.dump(data, fh, indent=2)
-						_file_data[target] = (data, path)
+						with open(target["path"], "w", encoding="utf-8") as fh:
+							json.dump(target["data"], fh, indent=2)
 					except (OSError, json.JSONDecodeError) as e:
 						p_print(f"Failed to update notes: {e}", Colours.FAIL)
 			else:
-				p_print(f"  ! {target} (unreadable)", Colours.WARNING)
+				p_print(f"  ! {target['key']} (unreadable)", Colours.WARNING)
 		elif key == "t" and filtered:
 			target = filtered[_selected]
-			data, path = _file_data.get(target, (None, os.path.join(folder, target)))
-			if data is not None:
-				cur_tags = data.get("tags", "")
+			if target["source"] != "json":
+				p_print("Tags are only available for JSON-saved accounts.", Colours.WARNING)
+				continue
+			if target["data"] is not None:
+				cur_tags = target["data"].get("tags", "")
 				new_tags = prompt_text(
-					f"Tags for {target} (comma-separated)", default=cur_tags
+					f"Tags for {target['key']} (comma-separated)", default=cur_tags
 				)
 				if new_tags is not None:
-					data["tags"] = new_tags
+					target["data"]["tags"] = new_tags
 					try:
-						with open(path, "w", encoding="utf-8") as fh:
-							json.dump(data, fh, indent=2)
-						_file_data[target] = (data, path)
+						with open(target["path"], "w", encoding="utf-8") as fh:
+							json.dump(target["data"], fh, indent=2)
 					except (OSError, json.JSONDecodeError) as e:
 						p_print(f"Failed to update tags: {e}", Colours.FAIL)
 			else:
-				p_print(f"  ! {target} (unreadable)", Colours.WARNING)
+				p_print(f"  ! {target['key']} (unreadable)", Colours.WARNING)
 		elif key == "d" and filtered:
 			target = filtered[_selected]
-			if prompt_yes_no(f"Delete {target}? (cannot undo)"):
+			if prompt_yes_no(f"Delete {target['key']}? (cannot undo)"):
 				try:
-					os.remove(os.path.join(folder, target))
-					p_print(f"Deleted {target}", Colours.OKGREEN)
-					_file_data.pop(target, None)
-					json_files.remove(target)
+					if target["source"] == "json":
+						os.remove(target["path"])
+					else:
+						remove_accounts_txt_line(
+							target["data"].get("email", ""), config.accountFormat
+						)
+					p_print(f"Deleted {target['key']}", Colours.OKGREEN)
+					entries.remove(target)
 					filtered.remove(target)
 					if _selected >= len(filtered):
 						_selected = max(0, len(filtered) - 1)
 				except OSError as e:
 					p_print(f"Delete failed: {e}", Colours.FAIL)
 		elif key == "a" and filtered:
-			# Batch select all visible
-			for f in filtered:
-				path = os.path.join(folder, f)
+			# Batch delete all visible
+			for e in list(filtered):
 				try:
-					os.remove(path)
-					p_print(f"Deleted {f}", Colours.OKGREEN)
-				except OSError as e:
-					p_print(f"Delete failed: {f}: {e}", Colours.FAIL)
-			json_files = [f for f in json_files if f not in filtered]
+					if e["source"] == "json":
+						os.remove(e["path"])
+					else:
+						remove_accounts_txt_line(
+							e["data"].get("email", ""), config.accountFormat
+						)
+					p_print(f"Deleted {e['key']}", Colours.OKGREEN)
+					entries.remove(e)
+				except OSError as ex:
+					p_print(f"Delete failed: {e['key']}: {ex}", Colours.FAIL)
 			filtered = []
 			_selected = 0
 		elif key == "r":
@@ -1322,7 +1382,7 @@ def _action_view_credentials(config):
 		elif key in ("c", "C") and filtered:
 			if _HAS_CLIPBOARD:
 				try:
-					data, _ = _file_data.get(filtered[_selected], (None, None))
+					data = filtered[_selected]["data"]
 					if data is not None:
 						_pyperclip.copy(data.get("email" if key == "c" else "password", ""))
 						p_print(f"{'Email' if key == 'c' else 'Password'} copied to clipboard!", Colours.OKGREEN)
@@ -1832,10 +1892,106 @@ def _action_create_folder(executable_path, config):
 	pause("Press Enter to return to the menu...")
 
 
+def _open_create_menu(executable_path, config):
+	"""Submenu for account creation options."""
+	while True:
+		items = [
+			MenuItem(
+				"Single Account",
+				lambda: _action_create_one(executable_path, config),
+				"Register one mega.nz account",
+			),
+			MenuItem(
+				"Batch Create",
+				lambda: _action_loop_create(executable_path, config),
+				"Create many accounts in sequence or parallel",
+			),
+			MenuItem("Back", lambda: _BACK, "Return to the main menu"),
+		]
+		menu = Menu("Create Accounts", items)
+		result = menu.run()
+		if result is _BACK:
+			break
+
+
+def _open_credentials_menu(config):
+	"""Submenu for viewing and exporting saved credentials."""
+	while True:
+		items = [
+			MenuItem(
+				"View Credentials",
+				lambda: _action_view_credentials(config),
+				"List every saved account with details",
+			),
+			MenuItem(
+				"Export Credentials",
+				lambda: _action_export(config),
+				"Write accounts to credentials.txt",
+			),
+			MenuItem(
+				"Export as Bitwarden CSV",
+				_action_export_bitwarden,
+				"Bitwarden-compatible CSV format",
+			),
+			MenuItem(
+				"Export as 1Password CSV",
+				_action_export_onepassword,
+				"1Password-compatible CSV format",
+			),
+			MenuItem(
+				"Export as KeePass CSV",
+				_action_export_keepass,
+				"KeePass-compatible CSV format",
+			),
+			MenuItem("Back", lambda: _BACK, "Return to the main menu"),
+		]
+		menu = Menu("Credentials", items)
+		result = menu.run()
+		if result is _BACK:
+			break
+
+
+def _open_upload_cloud_menu(executable_path, config):
+	"""Submenu for upload and cloud browsing."""
+	while True:
+		items = [
+			MenuItem(
+				"Upload File",
+				lambda: _action_upload(executable_path, config),
+				"Upload a file to a MEGA account",
+			),
+			MenuItem(
+				"Upload Directory",
+				lambda: _action_upload_dir(executable_path, config),
+				"Upload all files in a folder",
+			),
+			MenuItem(
+				"Browse Cloud",
+				lambda: _action_browse_cloud(executable_path, config),
+				"List and download files from your MEGA account",
+			),
+			MenuItem("Back", lambda: _BACK, "Return to the main menu"),
+		]
+		menu = Menu("Upload & Cloud", items)
+		result = menu.run()
+		if result is _BACK:
+			break
+
+
 def _open_account_menu(executable_path, config):
 	"""Submenu for account management operations."""
 	while True:
 		items = [
+			MenuItem(
+				"Keep Alive",
+				lambda: _action_keepalive(config),
+				"Log in to every account to keep it active",
+			),
+			MenuItem(
+				"Storage Info",
+				lambda: _action_storage(config),
+				"Show free quota for every saved account",
+			),
 			MenuItem(
 				"Delete Account",
 				lambda: _action_delete_account(executable_path, config),
@@ -1864,74 +2020,29 @@ def _run_tui(executable_path, config):
 	while True:
 		items = [
 			MenuItem(
-				"Create Account",
-				lambda: _action_create_one(executable_path, config),
-				"Register a single mega.nz account",
+				"Create Accounts",
+				lambda: _open_create_menu(executable_path, config),
+				"Single or batch account registration",
 			),
 			MenuItem(
-				"Loop Create",
-				lambda: _action_loop_create(executable_path, config),
-				"Create many accounts in a row",
-			),
-			MenuItem(
-				"View Credentials",
-				lambda: _action_view_credentials(config),
-				"List every saved account",
-			),
-			MenuItem(
-				"Export Credentials",
-				lambda: _action_export(config),
-				"Write accounts to credentials.txt",
-			),
-			MenuItem(
-				"Keep Alive Accounts",
-				lambda: _action_keepalive(config),
-				"Log in to every account to keep it active",
-			),
-			MenuItem(
-				"Storage Info",
-				lambda: _action_storage(config),
-				"Show free quota for every saved account",
-			),
-			MenuItem(
-				"Upload File",
-				lambda: _action_upload(executable_path, config),
-				"Upload a file to the latest account",
-			),
-			MenuItem(
-				"Upload Directory",
-				lambda: _action_upload_dir(executable_path, config),
-				"Upload all files in a folder",
-			),
-			MenuItem(
-				"Browse Cloud",
-				lambda: _action_browse_cloud(executable_path, config),
-				"List and download files from your MEGA account",
+				"Credentials",
+				lambda: _open_credentials_menu(config),
+				"View and export saved accounts",
 			),
 			MenuItem(
 				"Account Management",
 				lambda: _open_account_menu(executable_path, config),
-				"Delete account, change password, create folder",
+				"Keep alive, storage, delete, change password",
 			),
 			MenuItem(
-				"Export as Bitwarden CSV",
-				_action_export_bitwarden,
-				"Password-manager-compatible CSV format",
-			),
-			MenuItem(
-				"Export as 1Password CSV",
-				_action_export_onepassword,
-				"Password-manager-compatible CSV format",
-			),
-			MenuItem(
-				"Export as KeePass CSV",
-				_action_export_keepass,
-				"KeePass-compatible CSV format",
+				"Upload & Cloud",
+				lambda: _open_upload_cloud_menu(executable_path, config),
+				"Upload files and browse cloud storage",
 			),
 			MenuItem(
 				"Settings",
 				lambda: _open_settings(),
-				"Attempts, visible mode, CSV export, config editor",
+				"Attempts, visible mode, export formats, config editor",
 			),
 			MenuItem(
 				"Exit",

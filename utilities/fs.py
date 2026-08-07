@@ -3,6 +3,7 @@
 from dataclasses import asdict
 import os
 import json
+import re
 import sys
 
 from utilities.etc import p_print
@@ -329,6 +330,81 @@ def _get_encryption_password() -> str:
 	return ""
 
 
+def _parse_account_format(account_format: str, line: str) -> Credentials | None:
+	"""Reverse the account_format template to extract fields from a line.
+
+	Templates support the {email}, {password} and {emailPassword} placeholders
+	(e.g. "{email}#{password}"). Returns None when the line doesn't match.
+	"""
+	fmt = account_format or "{email}#{password}"
+	pattern = "^" + re.escape(fmt)
+	names = []
+	for name in ("email", "password", "emailPassword"):
+		tok = "{" + name + "}"
+		if tok in fmt:
+			names.append(name)
+			pattern = pattern.replace(re.escape(tok), f"(?P<{name}>.*?)")
+	pattern += "$"
+	match = re.match(pattern, line.rstrip("\n"))
+	if not match:
+		return None
+	return Credentials(
+		email=match.group("email") or "",
+		emailPassword=match.group("emailPassword") or "" if "emailPassword" in names else "",
+		password=match.group("password") or "",
+	)
+
+
+def read_accounts_txt(account_format: str = "") -> list[tuple[str, Credentials, float]]:
+	"""Parse credentials/accounts.txt (the single-file store written by
+	save_credentials when accountFormat is set) back into Credentials.
+
+	Returns a list of (basename, Credentials, mtime) tuples.
+	"""
+	path = os.path.join(CREDENTIALS_DIR, "accounts.txt")
+	if not os.path.isfile(path):
+		return []
+	try:
+		mtime = os.path.getmtime(path)
+	except OSError:
+		mtime = 0.0
+	result = []
+	with open(path, "r", encoding="utf-8") as fh:
+		for line in fh:
+			creds = _parse_account_format(account_format, line)
+			if creds is None or not creds.email:
+				continue
+			result.append((creds.email, creds, mtime))
+	return result
+
+
+def remove_accounts_txt_line(email: str, account_format: str = "") -> bool:
+	"""Remove every line in credentials/accounts.txt matching *email*."""
+	path = os.path.join(CREDENTIALS_DIR, "accounts.txt")
+	if not os.path.isfile(path):
+		return False
+	try:
+		with open(path, "r", encoding="utf-8") as fh:
+			lines = fh.readlines()
+	except OSError:
+		return False
+	kept = []
+	removed = False
+	for ln in lines:
+		creds = _parse_account_format(account_format, ln)
+		if creds is not None and creds.email == email:
+			removed = True
+			continue
+		kept.append(ln)
+	if removed:
+		try:
+			with open(path, "w", encoding="utf-8") as fh:
+				fh.writelines(kept)
+		except OSError:
+			return False
+	return removed
+
+
 def list_credentials() -> list[tuple[str, Credentials, float]]:
 	"""Return sorted list of (filename, Credentials, mtime) from credentials/."""
 	import glob
@@ -369,4 +445,15 @@ def list_credentials() -> list[tuple[str, Credentials, float]]:
 		)
 		_credentials_cache[path] = (mtime, creds)
 		result.append((os.path.basename(path), creds, mtime))
+
+	# Include flat accounts.txt entries (the store used when accountFormat is
+	# set), skipping emails already present as per-account JSON files.
+	cfg = read_config()
+	_fmt = cfg.accountFormat if cfg else ""
+	_known = {c.email for _, c, _ in result}
+	for name, creds, mtime in read_accounts_txt(_fmt):
+		if creds.email in _known:
+			continue
+		result.append((name, creds, mtime))
+		_known.add(creds.email)
 	return result

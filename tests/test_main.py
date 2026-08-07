@@ -1,5 +1,23 @@
-import pytest
+import os
+import subprocess
 import sys
+
+# Absolute path to the repo's main.py. Some CLI tests run main.py in an
+# isolated temp cwd so they deterministically exercise the "no saved
+# credentials" fast path instead of picking up real credentials (or network
+# latencies) from the checkout directory.
+MAIN_PY = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "main.py"))
+
+
+def _run_main(args, cwd=None, timeout=30):
+	return subprocess.run(
+		[sys.executable, MAIN_PY, *args],
+		capture_output=True,
+		text=True,
+		timeout=timeout,
+		cwd=cwd,
+	)
+
 
 class TestMain:
 	def test_module_imports(self):
@@ -79,26 +97,12 @@ class TestMain:
 # ======================================================================
 
 class TestMainCLI:
-	def test_main_list_cloud_no_crash(self):
-		import subprocess
-
-		result = subprocess.run(
-			[sys.executable, "main.py", "--list-cloud"],
-			capture_output=True,
-			text=True,
-			timeout=30,
-		)
+	def test_main_list_cloud_no_crash(self, tmp_path):
+		result = _run_main(["--list-cloud"], cwd=tmp_path)
 		assert "Traceback" not in result.stderr
 
-	def test_main_download_cloud_no_crash(self):
-		import subprocess
-
-		result = subprocess.run(
-			[sys.executable, "main.py", "--download-cloud", "test-id"],
-			capture_output=True,
-			text=True,
-			timeout=30,
-		)
+	def test_main_download_cloud_no_crash(self, tmp_path):
+		result = _run_main(["--download-cloud", "test-id"], cwd=tmp_path)
 		assert "Traceback" not in result.stderr
 
 	def test_main_version_flag(self):
@@ -110,7 +114,7 @@ class TestMainCLI:
 			text=True,
 			timeout=10,
 		)
-		assert "v1.4.0" in result.stdout
+		assert "v1.5.0" in result.stdout
 
 	def test_main_provider_validation_valid(self):
 		import subprocess
@@ -122,7 +126,7 @@ class TestMainCLI:
 			timeout=10,
 		)
 		assert result.returncode == 0
-		assert "v1.4.0" in result.stdout
+		assert "v1.5.0" in result.stdout
 
 	def test_main_provider_validation_invalid_stderr(self):
 		import subprocess
@@ -149,34 +153,23 @@ class TestMainCLI:
 		assert result.returncode != 0
 		assert "--json requires --health" in result.stdout + result.stderr
 
-	def test_main_health_flag_no_crash(self):
-		import subprocess
-
-		result = subprocess.run(
-			[sys.executable, "main.py", "--health"],
-			capture_output=True,
-			text=True,
-			timeout=30,
-		)
+	def test_main_health_flag_no_crash(self, tmp_path):
+		result = _run_main(["--health"], cwd=tmp_path)
 		assert "Traceback" not in result.stderr
 		assert (
 			"No saved credentials" in result.stdout
 			or "Health dashboard" in result.stdout
 		)
 
-	def test_main_health_json(self):
-		import subprocess
-
-		result = subprocess.run(
-			[sys.executable, "main.py", "--health", "--json"],
-			capture_output=True,
-			text=True,
-			timeout=30,
-		)
+	def test_main_health_json(self, tmp_path):
+		result = _run_main(["--health", "--json"], cwd=tmp_path)
 		assert result.returncode == 0
 		import json as _json
 
-		data = _json.loads(result.stdout)
+		# main.py may print a startup line (e.g. browser auto-detect) before
+		# the JSON payload; parse from the first '{'.
+		payload = result.stdout[result.stdout.index("{"):]
+		data = _json.loads(payload)
 		assert "error" in data or "summary" in data
 		assert "accounts" in data or "error" in data
 
@@ -236,7 +229,7 @@ class TestMainCLI:
 			timeout=10,
 		)
 		assert result.returncode == 0
-		assert "v1.4.0" in result.stdout
+		assert "v1.5.0" in result.stdout
 
 
 # ======================================================================
