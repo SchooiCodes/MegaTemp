@@ -46,6 +46,7 @@ def notify(title: str, message: str) -> None:
 				)
 			elif _sys.platform == "win32":
 				import ctypes as _ct
+
 				_ct.windll.user32.MessageBoxW(0, message, title, 0x40 | 0x1000)
 		except Exception:
 			pass
@@ -160,6 +161,7 @@ class ProxyManager:
 		try:
 			import urllib.request as _ur
 			import json as _json
+
 			req = _ur.Request(url, headers={"User-Agent": "MegaTemp"})
 			with _ur.urlopen(req, timeout=timeout) as resp:
 				raw = resp.read().decode("utf-8", errors="replace")
@@ -206,6 +208,7 @@ class ProxyManager:
 		if proxy.count("@") > 1:
 			return False
 		from urllib.parse import urlparse
+
 		try:
 			parsed = urlparse(proxy)
 			if parsed.scheme not in ("http", "https", "socks4", "socks5", ""):
@@ -238,7 +241,10 @@ class ProxyManager:
 		"""Test a proxy by making a request through it to a reliable endpoint."""
 		try:
 			import urllib.request as _ur
-			req = _ur.Request("http://httpbin.org/ip", headers={"User-Agent": "MegaTemp"})
+
+			req = _ur.Request(
+				"http://httpbin.org/ip", headers={"User-Agent": "MegaTemp"}
+			)
 			handler = _ur.ProxyHandler({"http": proxy, "https": proxy})
 			opener = _ur.build_opener(handler)
 			resp = opener.open(req, timeout=timeout)
@@ -347,6 +353,7 @@ def auto_update() -> None:
 	# Verify SHA256 checksum if available.
 	if expected_hash:
 		import hashlib as _hl
+
 		actual_hash = _hl.sha256()
 		with open(download_path, "rb") as _fh:
 			while True:
@@ -400,6 +407,7 @@ def delete_default(credentials: Credentials) -> None:
 	fails), so guard every step and treat "nothing to delete" as success.
 	"""
 	from services.upload import get_mega_session
+
 	try:
 		mega = get_mega_session(credentials)
 	except Exception:
@@ -421,13 +429,17 @@ def reinstall_tenacity() -> None:
 		pip = os.path.join(os.path.dirname(sys.executable), "pip")
 		if not os.path.exists(pip):
 			pip = "pip"
-		ret = subprocess.run([pip, "uninstall", "tenacity", "-y"], capture_output=True).returncode
+		ret = subprocess.run(
+			[pip, "uninstall", "tenacity", "-y"], capture_output=True
+		).returncode
 		if ret != 0:
 			p_print(
 				"Failed to uninstall old tenacity, continuing anyway...",
 				Colours.WARNING,
 			)
-		ret = subprocess.run([pip, "install", "tenacity"], capture_output=True).returncode
+		ret = subprocess.run(
+			[pip, "install", "tenacity"], capture_output=True
+		).returncode
 		if ret != 0:
 			p_print("Failed to install tenacity.", Colours.FAIL)
 			sys.exit(1)
@@ -567,6 +579,7 @@ def send_webhook(url: str, event: str, data: dict) -> None:
 	try:
 		import urllib.request as _ur
 		import json as _json
+
 		payload = _json.dumps({"event": event, "data": data}).encode()
 		req = _ur.Request(
 			url,

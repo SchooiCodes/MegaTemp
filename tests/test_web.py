@@ -1,5 +1,3 @@
-import pytest
-
 class TestWeb:
 	def test_set_verbose(self):
 		import utilities.web
@@ -33,4 +31,3 @@ class TestWeb:
 # ======================================================================
 # menu.py
 # ======================================================================
-

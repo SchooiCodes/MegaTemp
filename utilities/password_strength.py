@@ -6,7 +6,9 @@ import secrets
 import string
 
 
-def generate_password(length: int = 20, min_special: int = 2, min_digits: int = 3) -> str:
+def generate_password(
+	length: int = 20, min_special: int = 2, min_digits: int = 3
+) -> str:
 	"""Generate a cryptographically random password with guaranteed complexity."""
 	if length < 8:
 		length = 8

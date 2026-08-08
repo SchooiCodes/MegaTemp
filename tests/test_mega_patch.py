@@ -7,14 +7,17 @@ from types import SimpleNamespace
 class TestFastChunks:
 	def test_small_file_single_chunk(self):
 		from utilities.mega_patch import _fast_chunks
+
 		assert list(_fast_chunks(100)) == [(0, 100)]
 
 	def test_empty_file(self):
 		from utilities.mega_patch import _fast_chunks
+
 		assert list(_fast_chunks(0)) == [(0, 0)]
 
 	def test_exact_multiple_of_chunk_size(self):
 		from utilities.mega_patch import _FAST_CHUNK_SIZE, _fast_chunks
+
 		size = _FAST_CHUNK_SIZE * 2
 		assert list(_fast_chunks(size)) == [
 			(0, _FAST_CHUNK_SIZE),
@@ -23,6 +26,7 @@ class TestFastChunks:
 
 	def test_contiguous_coverage(self):
 		from utilities.mega_patch import _FAST_CHUNK_SIZE, _fast_chunks
+
 		for size in [1, 17, _FAST_CHUNK_SIZE + 1, _FAST_CHUNK_SIZE * 3 + 12345]:
 			chunks = list(_fast_chunks(size))
 			assert chunks[0][0] == 0
@@ -139,14 +143,21 @@ class TestUploadPatch:
 	def test_upload_single_session_and_payload_parity(self, tmp_path, monkeypatch):
 		data = bytes((i * 13 + 5) % 256 for i in range(131089))
 		ul_key = [
-			0x11111111, 0x22222222, 0x33333333,
-			0x44444444, 0x55555555, 0x66666666,
+			0x11111111,
+			0x22222222,
+			0x33333333,
+			0x44444444,
+			0x55555555,
+			0x66666666,
 		]
 
 		FakeSession, api_calls = self._run_upload(tmp_path, monkeypatch, data, ul_key)
-		expected_payloads, expected_meta = self._reference_payloads_and_mac(data, ul_key)
+		expected_payloads, expected_meta = self._reference_payloads_and_mac(
+			data, ul_key
+		)
 
 		from mega.crypto import get_chunks
+
 		chunks = list(get_chunks(len(data)))
 
 		posts = FakeSession.all_posts
@@ -165,19 +176,27 @@ class TestUploadPatch:
 		for (start, _size), expected in zip(chunks, expected_payloads, strict=True):
 			assert by_start[start] == expected, "payload bytes must match stock upload"
 
-		completion = next(c for c in api_calls if isinstance(c, dict) and c.get("a") == "p")
+		completion = next(
+			c for c in api_calls if isinstance(c, dict) and c.get("a") == "p"
+		)
 		last_start = chunks[-1][0]
 		assert completion["n"][0]["h"] == "handle-" + str(last_start)
 
 	def test_upload_empty_file(self, tmp_path, monkeypatch):
 		data = b""
 		ul_key = [
-			0x11111111, 0x22222222, 0x33333333,
-			0x44444444, 0x55555555, 0x66666666,
+			0x11111111,
+			0x22222222,
+			0x33333333,
+			0x44444444,
+			0x55555555,
+			0x66666666,
 		]
 		FakeSession, api_calls = self._run_upload(tmp_path, monkeypatch, data, ul_key)
 
-		expected_payloads, expected_meta = self._reference_payloads_and_mac(data, ul_key)
+		expected_payloads, expected_meta = self._reference_payloads_and_mac(
+			data, ul_key
+		)
 		posts = FakeSession.all_posts
 		assert len(posts) == 1
 		assert posts[0][0] == "https://upload.example/ul/0"
@@ -186,10 +205,16 @@ class TestUploadPatch:
 	def test_upload_small_file_matches_reference(self, tmp_path, monkeypatch):
 		data = bytes((i * 7 + 3) % 256 for i in range(100))
 		ul_key = [
-			0xAAAA1111, 0xBBBB2222, 0xCCCC3333,
-			0xDDDD4444, 0xEEEE5555, 0xFFFF6666,
+			0xAAAA1111,
+			0xBBBB2222,
+			0xCCCC3333,
+			0xDDDD4444,
+			0xEEEE5555,
+			0xFFFF6666,
 		]
 		FakeSession, api_calls = self._run_upload(tmp_path, monkeypatch, data, ul_key)
-		expected_payloads, expected_meta = self._reference_payloads_and_mac(data, ul_key)
+		expected_payloads, expected_meta = self._reference_payloads_and_mac(
+			data, ul_key
+		)
 		actual_payloads = [payload for _url, payload in FakeSession.all_posts]
 		assert actual_payloads == expected_payloads

@@ -16,6 +16,7 @@ def _login(mega, creds: Credentials) -> bool:
 def delete_account(credentials: Credentials) -> bool:
 	"""Delete all files and cancel the MEGA account."""
 	from services.upload import _safe_mega_session
+
 	mega = _safe_mega_session(credentials)
 	if mega is None:
 		return False
@@ -53,6 +54,7 @@ def delete_account(credentials: Credentials) -> bool:
 def change_password(credentials: Credentials, new_password: str) -> bool:
 	"""Change the MEGA account password."""
 	from services.upload import _safe_mega_session
+
 	mega = _safe_mega_session(credentials)
 	if mega is None:
 		return False
@@ -70,6 +72,7 @@ def change_password(credentials: Credentials, new_password: str) -> bool:
 def create_folder(credentials: Credentials, folder_name: str) -> bool:
 	"""Create a folder in the MEGA account root."""
 	from services.upload import _safe_mega_session
+
 	mega = _safe_mega_session(credentials)
 	if mega is None:
 		return False

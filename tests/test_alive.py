@@ -1,5 +1,5 @@
-import pytest
 import os
+
 
 class TestAlive:
 	def test_keepalive_no_credentials_folder(self, capsys, tmp_path):
@@ -27,4 +27,3 @@ class TestAlive:
 # ======================================================================
 # main.py - CLI
 # ======================================================================
-

@@ -1,5 +1,5 @@
-import pytest
 import os
+
 
 class TestPasswordManagerExports:
 	def test_export_bitwarden_no_folder(self, isolated_fs):
@@ -47,6 +47,7 @@ class TestPasswordManagerExports:
 
 		os.makedirs("credentials", exist_ok=True)
 		import csv as _csv
+
 		creds = Credentials("bob@test.test", "mpw", "secret123")
 		save_credentials(creds, "")
 		path = export_bitwarden_csv()
@@ -63,6 +64,7 @@ class TestPasswordManagerExports:
 
 		os.makedirs("credentials", exist_ok=True)
 		import csv as _csv
+
 		creds = Credentials("alice@test.test", "mpw", "megapw")
 		save_credentials(creds, "")
 		path = export_onepassword_csv()
@@ -76,15 +78,18 @@ class TestPasswordManagerExports:
 # Webhook tests
 # ======================================================================
 
+
 class TestKeePassExport:
 	def test_keepass_no_folder(self, isolated_fs):
 		from services.extract import export_keepass_csv
+
 		export_keepass_csv()  # no crash
 
 	def test_keepass_with_creds(self, isolated_fs):
 		from services.extract import export_keepass_csv
 		from utilities.models import Credentials
 		from utilities.fs import save_credentials
+
 		os.makedirs("credentials", exist_ok=True)
 		creds = Credentials("kp@test.test", "mpw", "kpw")
 		save_credentials(creds, "")
@@ -96,6 +101,7 @@ class TestKeePassExport:
 		from utilities.models import Credentials
 		from utilities.fs import save_credentials
 		import csv as _csv
+
 		os.makedirs("credentials", exist_ok=True)
 		creds = Credentials("kpuser@test.test", "mpw", "kppass")
 		save_credentials(creds, "")
@@ -112,4 +118,3 @@ class TestKeePassExport:
 # ======================================================================
 # Additional edge case tests
 # ======================================================================
-

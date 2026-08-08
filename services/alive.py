@@ -13,7 +13,9 @@ from mega.errors import RequestError
 from utilities.etc import p_print, Colours, elapsed, separator
 
 
-def _process_one(file: str, idx: int, total: int, verbose: bool, prune: bool, max_retries: int) -> dict:
+def _process_one(
+	file: str, idx: int, total: int, verbose: bool, prune: bool, max_retries: int
+) -> dict:
 	"""Process a single credential file for keepalive (runs in a thread)."""
 	path = f"./credentials/{file}"
 	result = {
@@ -99,6 +101,7 @@ def keepalive(verbose: bool, prune: bool = False, max_retries: int = 3) -> None:
 		max_retries: Retry attempts per account with exponential backoff.
 	"""
 	from utilities.fs import CREDENTIALS_DIR
+
 	if not os.path.isdir(CREDENTIALS_DIR):
 		p_print(
 			"No credentials found, please remove all arguments and try again.",

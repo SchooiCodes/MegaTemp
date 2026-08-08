@@ -12,7 +12,7 @@ import pytest
 
 @pytest.fixture
 def isolated_fs(tmp_path):
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    yield tmp_path
-    os.chdir(old_cwd)
+	old_cwd = os.getcwd()
+	os.chdir(tmp_path)
+	yield tmp_path
+	os.chdir(old_cwd)

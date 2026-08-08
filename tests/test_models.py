@@ -1,6 +1,7 @@
 import pytest
 import os
 
+
 class TestTypes:
 	def test_colours_class(self):
 		from utilities.models import Colours
@@ -116,8 +117,13 @@ class TestTypes:
 	def test_migrate_config_idempotent(self):
 		from utilities.models import migrate_config
 
-		raw = {"schemaVersion": 2, "executablePath": "/p",
-		       "jsonlExport": True, "mailTimeout": 60, "quiet": True}
+		raw = {
+			"schemaVersion": 2,
+			"executablePath": "/p",
+			"jsonlExport": True,
+			"mailTimeout": 60,
+			"quiet": True,
+		}
 		migrated = migrate_config(raw)
 		assert migrated["schemaVersion"] == 3
 		assert migrated["executablePath"] == "/p"
@@ -140,4 +146,3 @@ def isolated_fs(tmp_path):
 	# Create empty credentials directory for save tests
 	yield tmp_path
 	os.chdir(old_cwd)
-

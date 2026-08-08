@@ -308,7 +308,9 @@ def prompt_path(message: str, default: str = "", must_exist: bool = False) -> st
 	return val
 
 
-def prompt_int(message: str, default: int = 1, minimum: int = 1, maximum: int = 100000) -> int:
+def prompt_int(
+	message: str, default: int = 1, minimum: int = 1, maximum: int = 100000
+) -> int:
 	"""Ask for an integer within a range."""
 	while True:
 		raw = prompt_text(message, str(default))

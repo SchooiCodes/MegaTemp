@@ -1,6 +1,6 @@
-import pytest
 import os
 import time
+
 
 class TestEtc:
 	def test_elapsed_seconds(self):
@@ -90,6 +90,7 @@ class TestEtc:
 		assert VERSION.startswith("v")
 		assert "." in VERSION
 
+
 class TestNotify:
 	def test_notify_no_crash(self):
 		from utilities.etc import notify
@@ -101,6 +102,7 @@ class TestNotify:
 # ======================================================================
 # utilities/fs.py — config validation
 # ======================================================================
+
 
 class TestQuietMode:
 	def test_set_quiet_suppresses_output(self):
@@ -126,13 +128,16 @@ class TestQuietMode:
 # services/account.py — delete, change password, create folder (no-crash)
 # ======================================================================
 
+
 class TestWebhook:
 	def test_send_webhook_empty_url(self):
 		from utilities.etc import send_webhook
+
 		send_webhook("", "test", {})  # no crash
 
 	def test_send_webhook_invalid_url(self):
 		from utilities.etc import send_webhook
+
 		send_webhook("http://invalid.nonexistent.example/test", "test", {})  # no crash
 
 
@@ -140,14 +145,16 @@ class TestWebhook:
 # Proxy auto-fetch tests
 # ======================================================================
 
+
 class TestSendWebhook:
 	def test_webhook_suppressed_in_quiet(self):
 		from utilities.etc import set_quiet, send_webhook
+
 		set_quiet(True)
 		send_webhook("http://example.com/hook", "test", {"key": "val"})  # no crash
 		set_quiet(False)
 
 	def test_webhook_with_data(self):
 		from utilities.etc import send_webhook
-		send_webhook("", "test", {"email": "a@b.com", "timestamp": 100})  # no crash
 
+		send_webhook("", "test", {"email": "a@b.com", "timestamp": 100})  # no crash

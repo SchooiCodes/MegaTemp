@@ -7,7 +7,7 @@ Run `main.py` with no arguments to open the terminal menu. Navigate with
 settings with **← / →** inside the *Settings* submenu.
 
 ```
-MegaTemp v1.4.0
+MegaTemp v1.5.0
 ╔══════════════════════════════════════════════════════╗
 ║  Create Account                                      ║
 ║  Loop Create                                         ║
@@ -92,7 +92,7 @@ overwriting it.
 | | `--list-cloud` | List files in the most recent MEGA account |
 | | `--download-cloud ID` | Download a cloud file by its node ID |
 | | `--download-dest DIR` | Destination for `--download-cloud` (default `.`) |
-| | `--version` | Show version (`MegaTemp v1.4.0`) and exit |
+| | `--version` | Show version (`MegaTemp v1.5.0`) and exit |
 | | `--provider NAME` | Email provider: `mailtm` (default) or `guerrillamail` |
 | | `--health` | Show health dashboard for all saved accounts |
 | | `--json` | JSON output for `--health` |

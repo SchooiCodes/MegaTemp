@@ -96,6 +96,7 @@ class TestMain:
 # download.py
 # ======================================================================
 
+
 class TestMainCLI:
 	def test_main_list_cloud_no_crash(self, tmp_path):
 		result = _run_main(["--list-cloud"], cwd=tmp_path)
@@ -168,7 +169,7 @@ class TestMainCLI:
 
 		# main.py may print a startup line (e.g. browser auto-detect) before
 		# the JSON payload; parse from the first '{'.
-		payload = result.stdout[result.stdout.index("{"):]
+		payload = result.stdout[result.stdout.index("{") :]
 		data = _json.loads(payload)
 		assert "error" in data or "summary" in data
 		assert "accounts" in data or "error" in data
@@ -190,7 +191,13 @@ class TestMainCLI:
 		import subprocess
 
 		result = subprocess.run(
-			[sys.executable, "main.py", "--webhook-url", "http://example.com/hook", "--version"],
+			[
+				sys.executable,
+				"main.py",
+				"--webhook-url",
+				"http://example.com/hook",
+				"--version",
+			],
 			capture_output=True,
 			text=True,
 			timeout=10,
@@ -212,7 +219,13 @@ class TestMainCLI:
 		import subprocess
 
 		result = subprocess.run(
-			[sys.executable, "main.py", "--proxy-url", "http://example.com/proxies.txt", "--version"],
+			[
+				sys.executable,
+				"main.py",
+				"--proxy-url",
+				"http://example.com/proxies.txt",
+				"--version",
+			],
 			capture_output=True,
 			text=True,
 			timeout=10,
@@ -235,4 +248,3 @@ class TestMainCLI:
 # ======================================================================
 # utilities/exceptions.py — custom exception hierarchy
 # ======================================================================
-

@@ -1,5 +1,3 @@
-import pytest
-
 class TestPasswordStrength:
 	def test_entropy_empty(self):
 		from utilities.password_strength import estimate_entropy
@@ -28,6 +26,7 @@ class TestPasswordStrength:
 # ======================================================================
 # utilities/retry.py
 # ======================================================================
+
 
 class TestPasswordGenerator:
 	def test_generate_password_length(self):
@@ -60,4 +59,3 @@ class TestPasswordGenerator:
 # ======================================================================
 # etc.py — proxy testing, quiet mode
 # ======================================================================
-

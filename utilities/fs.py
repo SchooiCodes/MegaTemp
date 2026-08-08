@@ -243,6 +243,7 @@ def save_credentials_jsonl(credentials: Credentials) -> None:
 def _encrypt_key(password: str) -> bytes:
 	"""Derive a 32-byte AES key from a password using SHA-256."""
 	import hashlib
+
 	return hashlib.sha256(password.encode()).digest()
 
 
@@ -256,6 +257,7 @@ def encrypt_credential(data: dict, password: str) -> dict:
 		return data
 
 	import base64
+
 	fields = ["password", "emailPassword"]
 
 	for f in fields:
@@ -264,6 +266,7 @@ def encrypt_credential(data: dict, password: str) -> dict:
 			continue
 		try:
 			from cryptography.fernet import Fernet
+
 			key = base64.urlsafe_b64encode(_encrypt_key(password))
 			f_obj = Fernet(key)
 			data[f] = "ENC:" + f_obj.encrypt(val.encode()).decode()
@@ -292,6 +295,7 @@ def decrypt_credential(data: dict, password: str) -> dict:
 		return data
 
 	import base64
+
 	fields = ["password", "emailPassword"]
 
 	for f in fields:
@@ -299,6 +303,7 @@ def decrypt_credential(data: dict, password: str) -> dict:
 		if val.startswith("ENC:"):
 			try:
 				from cryptography.fernet import Fernet, InvalidToken
+
 				key = base64.urlsafe_b64encode(_encrypt_key(password))
 				f_obj = Fernet(key)
 				data[f] = f_obj.decrypt(val[4:].encode()).decode()
@@ -308,12 +313,16 @@ def decrypt_credential(data: dict, password: str) -> dict:
 		elif val.startswith("OBS:"):
 			key = _encrypt_key(password)
 			enc = base64.b64decode(val[4:])
-			dec = bytes(a ^ b for a, b in zip(enc, key * (len(enc) // len(key) + 1), strict=True))
+			dec = bytes(
+				a ^ b
+				for a, b in zip(enc, key * (len(enc) // len(key) + 1), strict=True)
+			)
 			data[f] = dec.rstrip(b"\0").decode(errors="replace")
 	return data
 
 
 _encryption_password_cache: str = ""
+
 
 def _get_encryption_password() -> str:
 	"""Read encryption password from config (best-effort, cached)."""
@@ -350,7 +359,9 @@ def _parse_account_format(account_format: str, line: str) -> Credentials | None:
 		return None
 	return Credentials(
 		email=match.group("email") or "",
-		emailPassword=match.group("emailPassword") or "" if "emailPassword" in names else "",
+		emailPassword=match.group("emailPassword") or ""
+		if "emailPassword" in names
+		else "",
 		password=match.group("password") or "",
 	)
 

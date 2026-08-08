@@ -3,7 +3,10 @@ import csv
 import json
 from utilities.etc import p_print, Colours
 
-from utilities.fs import CREDENTIALS_DIR as CREDENTIALS_FOLDER, CREDENTIALS_TXT as OUTPUT_FILE
+from utilities.fs import (
+	CREDENTIALS_DIR as CREDENTIALS_FOLDER,
+	CREDENTIALS_TXT as OUTPUT_FILE,
+)
 
 
 def _load_all() -> list[dict]:
@@ -26,22 +29,51 @@ def _load_all() -> list[dict]:
 _EXPORT_FORMATS = {
 	"bitwarden": {
 		"file": "credentials/bitwarden_export.csv",
-		"header": ["folder", "favorite", "type", "name", "notes",
-		           "login_uri", "login_username", "login_password", "login_totp"],
-		"row": lambda a: ["", "0", "1", a.get("email", ""), a.get("notes", ""),
-		                  "https://mega.nz", a.get("email", ""), a.get("password", ""), ""],
+		"header": [
+			"folder",
+			"favorite",
+			"type",
+			"name",
+			"notes",
+			"login_uri",
+			"login_username",
+			"login_password",
+			"login_totp",
+		],
+		"row": lambda a: [
+			"",
+			"0",
+			"1",
+			a.get("email", ""),
+			a.get("notes", ""),
+			"https://mega.nz",
+			a.get("email", ""),
+			a.get("password", ""),
+			"",
+		],
 	},
 	"1password": {
 		"file": "credentials/1password_export.csv",
 		"header": ["title", "url", "username", "password", "notes"],
-		"row": lambda a: [f"MEGA - {a.get('email', '')}", "https://mega.nz",
-		                  a.get("email", ""), a.get("password", ""), a.get("notes", "")],
+		"row": lambda a: [
+			f"MEGA - {a.get('email', '')}",
+			"https://mega.nz",
+			a.get("email", ""),
+			a.get("password", ""),
+			a.get("notes", ""),
+		],
 	},
 	"keepass": {
 		"file": "credentials/keepass_export.csv",
 		"header": ["Group", "Title", "Username", "Password", "URL", "Notes"],
-		"row": lambda a: ["MEGA", a.get("email", ""), a.get("email", ""),
-		                  a.get("password", ""), "https://mega.nz", a.get("notes", "")],
+		"row": lambda a: [
+			"MEGA",
+			a.get("email", ""),
+			a.get("email", ""),
+			a.get("password", ""),
+			"https://mega.nz",
+			a.get("notes", ""),
+		],
 	},
 }
 

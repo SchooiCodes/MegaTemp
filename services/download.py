@@ -10,6 +10,7 @@ from utilities.retry import retry
 def list_files(credentials: Credentials) -> list[dict]:
 	"""List all files in the MEGA account root (node 2)."""
 	from services.upload import _safe_mega_session
+
 	mega = _safe_mega_session(credentials)
 	if mega is None:
 		return []
@@ -43,6 +44,7 @@ def download_file(
 ) -> str | None:
 	"""Download a file from MEGA by its node dict. Returns local path or None."""
 	from services.upload import _safe_mega_session
+
 	mega = _safe_mega_session(credentials)
 	if mega is None:
 		return None
@@ -56,9 +58,9 @@ def download_file(
 
 		def _run():
 			try:
-				result[0] = retry(label="mega.download", max_attempts=3)(
-				    mega.download
-				)(node, dest_path=dest_dir)
+				result[0] = retry(label="mega.download", max_attempts=3)(mega.download)(
+					node, dest_path=dest_dir
+				)
 			except Exception as e:
 				exception[0] = e
 

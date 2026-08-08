@@ -1,5 +1,5 @@
-import pytest
 import os
+
 
 class TestExtract:
 	def test_extract_no_folder(self, capsys, tmp_path):
@@ -22,4 +22,3 @@ class TestExtract:
 		captured = capsys.readouterr()
 		assert "Extracting 0 account(s)" in captured.out
 		os.chdir(old)
-

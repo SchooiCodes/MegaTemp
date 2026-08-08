@@ -1,5 +1,3 @@
-import pytest
-
 class TestConfigValidation:
 	def test_validate_empty(self):
 		from utilities.fs import _validate_config
@@ -26,9 +24,11 @@ class TestConfigValidation:
 # services/upload.py — retry on upload
 # ======================================================================
 
+
 class TestConfigProfiles:
 	def test_set_profile(self, isolated_fs):
-		from utilities.fs import set_config_profile, _config_path, read_config, write_default_config
+		from utilities.fs import set_config_profile, _config_path
+
 		# Default: config.json
 		assert _config_path().endswith("config.json")
 		set_config_profile("testprof")
@@ -39,7 +39,6 @@ class TestConfigProfiles:
 
 	def test_profile_separate_config(self, isolated_fs):
 		from utilities.fs import set_config_profile, read_config, write_default_config
-		from utilities.models import Config
 
 		# Write default config (no profile)
 		cfg = write_default_config()
@@ -58,9 +57,11 @@ class TestConfigProfiles:
 # Config migration v2->v3 tests
 # ======================================================================
 
+
 class TestConfigMigrationV2:
 	def test_migrate_v2_to_v3(self):
 		from utilities.models import migrate_config
+
 		raw = {
 			"schemaVersion": 2,
 			"executablePath": "/p",
@@ -77,6 +78,7 @@ class TestConfigMigrationV2:
 
 	def test_migrate_v0_through_v3(self):
 		from utilities.models import migrate_config
+
 		raw = {"executablePath": "/test"}
 		migrated = migrate_config(raw)
 		assert migrated["schemaVersion"] == 3
@@ -90,25 +92,30 @@ class TestConfigMigrationV2:
 # Encryption tests
 # ======================================================================
 
+
 class TestConfigMailTimeout:
 	def test_mail_timeout_from_config(self):
 		from utilities.models import Config
+
 		cfg = Config(mailTimeout=60)
 		assert cfg.mailTimeout == 60
 
 	def test_mail_timeout_default(self):
 		from utilities.models import Config
+
 		cfg = Config()
 		assert cfg.mailTimeout == 45
+
 
 class TestConfigDefaults:
 	def test_config_default_webhook_url(self):
 		from utilities.models import Config
+
 		c = Config()
 		assert c.webhookUrl == ""
 
 	def test_config_default_encryption_password(self):
 		from utilities.models import Config
+
 		c = Config()
 		assert c.encryptionPassword == ""
-

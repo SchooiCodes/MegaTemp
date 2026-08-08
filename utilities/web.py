@@ -5,9 +5,13 @@ import re
 import string
 import random
 import html
+from typing import TYPE_CHECKING
 import requests
 import pymailtm
 from faker import Faker
+
+if TYPE_CHECKING:
+	from utilities.provider import EmailProvider
 
 from pymailtm.pymailtm import CouldNotGetAccountException, CouldNotGetMessagesException
 import pyppeteer
@@ -109,7 +113,9 @@ def get_random_string(length: int) -> str:
 	return "".join(random.choice(alphabet) for _ in range(length))
 
 
-async def initial_setup(context: object, message: object, credentials: Credentials) -> None:
+async def initial_setup(
+	context: object, message: object, credentials: Credentials
+) -> None:
 	"""Initial setup for the account.
 
 	Opens the MEGA confirmation link, enters the account password to finish
@@ -146,7 +152,10 @@ async def initial_setup(context: object, message: object, credentials: Credentia
 				timeout=2000,
 			)
 		except Exception:
-			_log("[confirm] still on confirm page after 2s wait, continuing", Colours.WARNING)
+			_log(
+				"[confirm] still on confirm page after 2s wait, continuing",
+				Colours.WARNING,
+			)
 
 		# Modern MEGA flow: the link may redirect to /fm/ (file manager),
 		# meaning the account is already confirmed — no password needed.
@@ -270,7 +279,9 @@ async def initial_setup(context: object, message: object, credentials: Credentia
 			pass
 
 
-async def mail_login(credentials: Credentials, provider_name: str = "mailtm") -> object | None:
+async def mail_login(
+	credentials: Credentials, provider_name: str = "mailtm"
+) -> object | None:
 	"""Log into the email account and return a mailbox object.
 
 	For mail.tm (default): retries with backoff and caches the session
@@ -293,7 +304,9 @@ async def mail_login(credentials: Credentials, provider_name: str = "mailtm") ->
 		try:
 			mail = await asyncio.to_thread(
 				pymailtm.Account,
-				credentials.id, credentials.email, credentials.emailPassword
+				credentials.id,
+				credentials.email,
+				credentials.emailPassword,
 			)
 			_log(f"[mail] logged into mailbox {credentials.email}", Colours.OKGREEN)
 			# Cache for next retry.
@@ -456,9 +469,7 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 					timeout=15,
 				)
 				resp.raise_for_status()
-				_mailtm_domains = [
-					d["domain"] for d in resp.json()["hydra:member"]
-				]
+				_mailtm_domains = [d["domain"] for d in resp.json()["hydra:member"]]
 			except Exception as e:
 				raise CouldNotGetAccountException(
 					f"Could not fetch mail.tm domains: {e}"
@@ -478,9 +489,7 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 				timeout=10,
 			)
 			if step_resp.status_code not in (200, 201):
-				raise CouldNotGetAccountException(
-					f"HTTP {step_resp.status_code}"
-				)
+				raise CouldNotGetAccountException(f"HTTP {step_resp.status_code}")
 			response_data = step_resp.json()
 			account = pymailtm.Account(
 				response_data["id"], response_data["address"], password

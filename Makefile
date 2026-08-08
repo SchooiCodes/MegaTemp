@@ -36,7 +36,7 @@ docker-build:
 docker-run:
 	docker run -it --cap-add=SYS_ADMIN -v ./credentials:/app/credentials megatem
 
-VERSION ?= v1.4.0
+VERSION ?= v1.5.0
 
 release:
 	git tag -f $(VERSION) HEAD && git push origin $(VERSION) --force

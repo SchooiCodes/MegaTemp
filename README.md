@@ -3,8 +3,10 @@
 > Generate MEGA.nz accounts from the command line — disposable email, headless
 > browser, file upload, and loops.
 
+[![Tests](https://github.com/SchooiCodes/MegaTemp/actions/workflows/tests.yml/badge.svg)](https://github.com/SchooiCodes/MegaTemp/actions/workflows/tests.yml)
 [![Ruff](https://github.com/SchooiCodes/MegaTemp/actions/workflows/ruff.yml/badge.svg)](https://github.com/SchooiCodes/MegaTemp/actions/workflows/ruff.yml)
 [![Build](https://github.com/SchooiCodes/MegaTemp/actions/workflows/build.yml/badge.svg)](https://github.com/SchooiCodes/MegaTemp/actions/workflows/build.yml)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](./LICENSE)
 
 ---
 
@@ -88,7 +90,7 @@ python main.py
 Run without arguments:
 
 ```
-MegaTemp v1.4.0
+MegaTemp v1.5.0
 ╔══════════════════════════════════════════════════════╗
 ║  Create Account                                      ║
 ║  Loop Create                                         ║

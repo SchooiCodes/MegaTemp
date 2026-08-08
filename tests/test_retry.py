@@ -1,5 +1,3 @@
-import pytest
-
 class TestRetry:
 	def test_retry_success_first_try(self):
 		from utilities.retry import retry
@@ -47,4 +45,3 @@ class TestRetry:
 # ======================================================================
 # utilities/provider.py — provider registry
 # ======================================================================
-

@@ -9,6 +9,10 @@ config.json
 credentials.txt
 .ruff_cache
 .mypy_cache
+.pytest_cache
+.coverage
+htmlcov/
+loop_state.json
 .pymailtm
 diagtmp
 *.pyc

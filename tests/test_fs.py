@@ -2,6 +2,7 @@ import pytest
 import os
 import json
 
+
 class TestFs:
 	def test_write_default_config_creates_file(self, isolated_fs):
 		from utilities.fs import write_default_config
@@ -153,10 +154,16 @@ class TestFs:
 # etc.py
 # ======================================================================
 
+
 class TestEncryption:
 	def test_encrypt_decrypt_roundtrip(self):
 		from utilities.fs import encrypt_credential, decrypt_credential
-		data = {"email": "test@test.com", "password": "secret123", "emailPassword": "mailpw"}
+
+		data = {
+			"email": "test@test.com",
+			"password": "secret123",
+			"emailPassword": "mailpw",
+		}
 		orig = dict(data)
 		encrypted = encrypt_credential(dict(data), "mypassword")
 		# password and emailPassword should be encrypted
@@ -170,18 +177,21 @@ class TestEncryption:
 
 	def test_encrypt_noop_without_password(self):
 		from utilities.fs import encrypt_credential
+
 		data = {"email": "t@t.com", "password": "pw"}
 		result = encrypt_credential(dict(data), "")
 		assert result == data
 
 	def test_decrypt_noop_without_password(self):
 		from utilities.fs import decrypt_credential
+
 		data = {"email": "t@t.com", "password": "pw"}
 		result = decrypt_credential(dict(data), "")
 		assert result == data
 
 	def test_wrong_password_fails_gracefully(self):
 		from utilities.fs import encrypt_credential, decrypt_credential
+
 		data = {"email": "t@t.com", "password": "secret"}
 		encrypted = encrypt_credential(dict(data), "correct")
 		# Wrong password should not crash but may produce garbage
@@ -190,14 +200,16 @@ class TestEncryption:
 
 	def test_encrypted_save_and_list(self, isolated_fs):
 		from utilities.models import Credentials
-		from utilities.fs import save_credentials, list_credentials, encrypt_credential, decrypt_credential
+		from utilities.fs import save_credentials
 
 		creds = Credentials("enc@test.com", "mailpw", "megapw")
 		# Save with encryption password
 		save_credentials(creds, "", "enc_key")
 
 		# Read the raw file — should be encrypted
-		import glob, json
+		import glob
+		import json
+
 		files = glob.glob("credentials/*.json")
 		assert len(files) == 1
 		with open(files[0]) as f:
@@ -205,4 +217,3 @@ class TestEncryption:
 		assert raw["password"].startswith(("ENC:", "OBS:"))
 		# list_credentials should auto-decrypt if config has the password
 		# (without config it returns encrypted data — that's OK, no crash)
-

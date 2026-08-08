@@ -114,6 +114,7 @@ _proxy_manager: ProxyManager | None = None
 # errors, so we swallow exactly those while letting anything else through.
 _HARMLESS_ASYNC_ERRORS = ("Target closed", "No session with given id")
 
+
 def _quiet_async_exceptions(loop, context):
 	"""asyncio exception handler that hides benign pyppeteer teardown errors.
 
@@ -220,6 +221,7 @@ async def _launch_browser(kwargs: dict):
 			for pg in await browser.pages():
 				await pg.close()
 			import signal as _signal
+
 			_signal.signal(_signal.SIGINT, _sigint_handler)
 			return browser
 		except Exception as exc:
@@ -304,9 +306,7 @@ reg.add_argument(
 )
 
 up = parser.add_argument_group("Upload")
-up.add_argument(
-	"-f", "--file", required=False, help="Uploads a file to the account."
-)
+up.add_argument("-f", "--file", required=False, help="Uploads a file to the account.")
 up.add_argument(
 	"--upload-dir",
 	required=False,
@@ -505,6 +505,7 @@ def setup() -> Tuple[str, Config]:
 	"""Sets up the configs so everything runs smoothly."""
 
 	from utilities.fs import set_config_profile
+
 	if console_args.profile:
 		set_config_profile(console_args.profile)
 
@@ -638,7 +639,11 @@ def loop_registrations(
 					else:
 						failures += 1
 				# Save checkpoint every 5th iteration or every 30s.
-				if successes + failures == 1 or (successes + failures) % 5 == 0 or (time.monotonic() - start) > 30:
+				if (
+					successes + failures == 1
+					or (successes + failures) % 5 == 0
+					or (time.monotonic() - start) > 30
+				):
 					save_checkpoint(
 						LoopState(
 							total=loop_count,
@@ -769,7 +774,14 @@ def parallel_registrations(
 						async with _lock:
 							successes -= 1
 							failures += 1
-						if isinstance(exc, (pyppeteer.errors.BrowserError, pyppeteer.errors.PageError, pyppeteer.errors.NetworkError)):
+						if isinstance(
+							exc,
+							(
+								pyppeteer.errors.BrowserError,
+								pyppeteer.errors.PageError,
+								pyppeteer.errors.NetworkError,
+							),
+						):
 							try:
 								await browser.close()
 							except Exception:
@@ -878,7 +890,10 @@ async def register(
 					"args": _build_browser_args(),
 					"executablePath": executable_path,
 					"autoClose": False,
-					"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
+					"ignoreDefaultArgs": [
+						"--enable-automation",
+						"--disable-extensions",
+					],
 				}
 			)
 
@@ -1009,9 +1024,15 @@ async def register(
 
 	p_print("Saving credentials ...", Colours.HEADER)
 	await asyncio.gather(
-		asyncio.to_thread(save_credentials, credentials, config.accountFormat, encryption_password),
-		asyncio.to_thread(save_credentials_csv, credentials) if export_csv else asyncio.sleep(0),
-		asyncio.to_thread(save_credentials_jsonl, credentials) if export_jsonl else asyncio.sleep(0),
+		asyncio.to_thread(
+			save_credentials, credentials, config.accountFormat, encryption_password
+		),
+		asyncio.to_thread(save_credentials_csv, credentials)
+		if export_csv
+		else asyncio.sleep(0),
+		asyncio.to_thread(save_credentials_jsonl, credentials)
+		if export_jsonl
+		else asyncio.sleep(0),
 	)
 
 	if console_args.file is not None:
@@ -1131,31 +1152,31 @@ def _action_loop_create(executable_path, config):
 	if not prompt_yes_no("Continue?"):
 		return
 	try:
-			if parallel > 1:
-				parallel_registrations(
-					count,
-					executable_path,
-					config,
-					parallelism=parallel,
-					visible=_SETTINGS["visible"],
-					max_attempts=_SETTINGS["attempts"],
-					export_csv=_SETTINGS["export_csv"],
-					export_jsonl=_SETTINGS["export_jsonl"],
-					webhook_url=_get_webhook_url(config),
-					encryption_password=_get_encryption_password(config),
-				)
-			else:
-				loop_registrations(
-					count,
-					executable_path,
-					config,
-					visible=_SETTINGS["visible"],
-					max_attempts=_SETTINGS["attempts"],
-					export_csv=_SETTINGS["export_csv"],
-					export_jsonl=_SETTINGS["export_jsonl"],
-					webhook_url=_get_webhook_url(config),
-					encryption_password=_get_encryption_password(config),
-				)
+		if parallel > 1:
+			parallel_registrations(
+				count,
+				executable_path,
+				config,
+				parallelism=parallel,
+				visible=_SETTINGS["visible"],
+				max_attempts=_SETTINGS["attempts"],
+				export_csv=_SETTINGS["export_csv"],
+				export_jsonl=_SETTINGS["export_jsonl"],
+				webhook_url=_get_webhook_url(config),
+				encryption_password=_get_encryption_password(config),
+			)
+		else:
+			loop_registrations(
+				count,
+				executable_path,
+				config,
+				visible=_SETTINGS["visible"],
+				max_attempts=_SETTINGS["attempts"],
+				export_csv=_SETTINGS["export_csv"],
+				export_jsonl=_SETTINGS["export_jsonl"],
+				webhook_url=_get_webhook_url(config),
+				encryption_password=_get_encryption_password(config),
+			)
 	except SystemExit:
 		pass
 	pause("Press Enter to return to the menu...")
@@ -1307,7 +1328,9 @@ def _action_view_credentials(config):
 		elif key == "n" and filtered:
 			target = filtered[_selected]
 			if target["source"] != "json":
-				p_print("Notes are only available for JSON-saved accounts.", Colours.WARNING)
+				p_print(
+					"Notes are only available for JSON-saved accounts.", Colours.WARNING
+				)
 				continue
 			if target["data"] is not None:
 				cur_notes = target["data"].get("notes", "")
@@ -1324,7 +1347,9 @@ def _action_view_credentials(config):
 		elif key == "t" and filtered:
 			target = filtered[_selected]
 			if target["source"] != "json":
-				p_print("Tags are only available for JSON-saved accounts.", Colours.WARNING)
+				p_print(
+					"Tags are only available for JSON-saved accounts.", Colours.WARNING
+				)
 				continue
 			if target["data"] is not None:
 				cur_tags = target["data"].get("tags", "")
@@ -1384,8 +1409,13 @@ def _action_view_credentials(config):
 				try:
 					data = filtered[_selected]["data"]
 					if data is not None:
-						_pyperclip.copy(data.get("email" if key == "c" else "password", ""))
-						p_print(f"{'Email' if key == 'c' else 'Password'} copied to clipboard!", Colours.OKGREEN)
+						_pyperclip.copy(
+							data.get("email" if key == "c" else "password", "")
+						)
+						p_print(
+							f"{'Email' if key == 'c' else 'Password'} copied to clipboard!",
+							Colours.OKGREEN,
+						)
 					else:
 						p_print("Credential unreadable.", Colours.WARNING)
 				except Exception as e:
@@ -1402,6 +1432,7 @@ def _action_view_credentials(config):
 def _action_export(config):
 	"""Export saved credentials to a flat file."""
 	from utilities.fs import CREDENTIALS_TXT
+
 	if os.path.exists(CREDENTIALS_TXT) and not prompt_yes_no(
 		"credentials.txt already exists. Overwrite?"
 	):
@@ -1523,6 +1554,7 @@ def _action_storage(config, json_output=False):
 		)
 	if not json_output:
 		pause("Press Enter to return to the menu...")
+
 
 def _action_keepalive(config):
 	"""Keep all saved accounts alive."""
@@ -1782,6 +1814,7 @@ def _toggle(key):
 def _action_generate_password():
 	"""Generate a random strong password and optionally copy to clipboard."""
 	from utilities.password_strength import generate_password, strength_label
+
 	length = prompt_int("Password length", default=20, minimum=8, maximum=128)
 	pw = generate_password(length)
 	_label, _colour = strength_label(pw)
@@ -1789,6 +1822,7 @@ def _action_generate_password():
 	if prompt_yes_no("Copy to clipboard?"):
 		try:
 			import pyperclip as _pc
+
 			_pc.copy(pw)
 			p_print("Copied!", Colours.OKGREEN)
 		except (ImportError, Exception) as e:
@@ -1799,6 +1833,7 @@ def _action_generate_password():
 def _action_export_bitwarden():
 	"""Export credentials in Bitwarden CSV format."""
 	from services.extract import export_bitwarden_csv
+
 	p_print("Exporting to Bitwarden CSV...", Colours.HEADER)
 	try:
 		export_bitwarden_csv()
@@ -1810,6 +1845,7 @@ def _action_export_bitwarden():
 def _action_export_onepassword():
 	"""Export credentials in 1Password CSV format."""
 	from services.extract import export_onepassword_csv
+
 	p_print("Exporting to 1Password CSV...", Colours.HEADER)
 	try:
 		export_onepassword_csv()
@@ -1821,6 +1857,7 @@ def _action_export_onepassword():
 def _action_export_keepass():
 	"""Export credentials in KeePass CSV format."""
 	from services.extract import export_keepass_csv
+
 	p_print("Exporting to KeePass CSV...", Colours.HEADER)
 	try:
 		export_keepass_csv()
@@ -1837,6 +1874,7 @@ def _action_delete_account(executable_path, config):
 	if not prompt_yes_no(f"Really delete {creds.email}? This CANNOT be undone."):
 		return
 	from services.account import delete_account
+
 	if delete_account(creds):
 		p_print(f"Account {creds.email} deleted.", Colours.OKGREEN)
 		fname = f"credentials/{creds.email.split('@')[0]}.json"
@@ -1864,10 +1902,12 @@ def _action_change_password(executable_path, config):
 		pause()
 		return
 	from services.account import change_password
+
 	if change_password(creds, new_pw):
 		fname = f"credentials/{creds.email.split('@')[0]}.json"
 		try:
 			import json
+
 			with open(fname, "r") as f:
 				data = json.load(f)
 			data["password"] = new_pw
@@ -1888,6 +1928,7 @@ def _action_create_folder(executable_path, config):
 	if not name:
 		return
 	from services.account import create_folder
+
 	create_folder(creds, name)
 	pause("Press Enter to return to the menu...")
 
@@ -2106,6 +2147,7 @@ if console_args.proxy_url and not _proxy_manager.active:
 if __name__ == "__main__":
 	set_verbose(console_args.verbose)
 	import threading as _th
+
 	_t = _th.Thread(target=auto_update, daemon=True)
 	_t.start()
 	_t.join(timeout=5)
@@ -2155,12 +2197,15 @@ if __name__ == "__main__":
 		extract_credentials(config.accountFormat)
 	elif console_args.export_keepass:
 		from services.extract import export_keepass_csv
+
 		export_keepass_csv()
 	elif console_args.export_bitwarden:
 		from services.extract import export_bitwarden_csv
+
 		export_bitwarden_csv()
 	elif console_args.export_onepassword:
 		from services.extract import export_onepassword_csv
+
 		export_onepassword_csv()
 	elif console_args.keepalive:
 		p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)

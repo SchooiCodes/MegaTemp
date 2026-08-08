@@ -1,5 +1,5 @@
-import pytest
 import os
+
 
 class TestProxyManager:
 	def test_empty(self):
@@ -43,6 +43,7 @@ class TestProxyManager:
 		assert ProxyManager._validate("http://u:p@1.2.3.4:80") is True
 		assert ProxyManager._validate("") is False
 
+
 class TestProxyTesting:
 	def test_test_proxy_invalid(self):
 		from utilities.etc import ProxyManager
@@ -58,21 +59,26 @@ class TestProxyTesting:
 		results = pm.test_all(timeout=1)
 		assert results == []
 
+
 class TestProxyAutoFetch:
 	def test_fetch_from_url_invalid(self):
 		from utilities.etc import ProxyManager
-		result = ProxyManager.fetch_from_url("http://invalid.nonexistent.example/proxies.txt")
+
+		result = ProxyManager.fetch_from_url(
+			"http://invalid.nonexistent.example/proxies.txt"
+		)
 		assert result == []
 
 	def test_fetch_from_url_empty(self):
 		from utilities.etc import ProxyManager
-		import os, tempfile
+		import tempfile
+
 		# Create a local "URL" via file://
 		tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
 		tmp.write("# comment\n")
 		tmp.close()
 		try:
-			result = ProxyManager.fetch_from_url("file://" + tmp.name)
+			ProxyManager.fetch_from_url("file://" + tmp.name)
 			# file:// may not work on all platforms; if it does, expect no proxies
 		except Exception:
 			pass
@@ -80,6 +86,7 @@ class TestProxyAutoFetch:
 
 	def test_fetch_and_add_rejects_bad_url(self):
 		from utilities.etc import ProxyManager
+
 		pm = ProxyManager()
 		n = pm.fetch_and_add("http://invalid.nonexistent.example/proxies.txt")
 		assert n == 0
@@ -88,4 +95,3 @@ class TestProxyAutoFetch:
 # ======================================================================
 # Config profile tests
 # ======================================================================
-

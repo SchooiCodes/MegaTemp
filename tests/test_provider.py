@@ -1,5 +1,3 @@
-import pytest
-
 class TestProviderRegistry:
 	def test_get_provider_unknown(self):
 		from utilities.provider import get_provider
@@ -24,4 +22,3 @@ class TestProviderRegistry:
 # ======================================================================
 # utilities/etc.py — notify
 # ======================================================================
-

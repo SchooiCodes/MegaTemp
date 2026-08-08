@@ -1,6 +1,5 @@
-import pytest
 import os
-import sys
+
 
 class TestMenu:
 	def test_menu_item_label(self):
@@ -91,7 +90,6 @@ class TestMenu:
 	def test_prompt_path_existing_dir_not_crash(self, tmp_path):
 		"""prompt_path with must_exist=True on a real path."""
 		from utilities.menu import prompt_path
-		import os
 
 		# Existence check is done after input; we can't mock input easily in CI
 		# but at least verify the function doesn't crash on import and logic
@@ -102,4 +100,3 @@ class TestMenu:
 # ======================================================================
 # services/
 # ======================================================================
-

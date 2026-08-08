@@ -57,6 +57,7 @@ class MailTmProvider(EmailProvider):
 		for attempt in range(1, max_retries + 1):
 			try:
 				from utilities.web import _unique_mail_address, get_random_string
+
 				address = _unique_mail_address(self._mailtm_domains)
 				password = get_random_string(10)
 				response = await asyncio.to_thread(
@@ -91,6 +92,7 @@ class MailTmProvider(EmailProvider):
 		credentials.email = account.address
 		credentials.emailPassword = account.password
 		from utilities.web import get_random_string
+
 		credentials.password = get_random_string(14)
 		credentials.id = account.id_
 		return credentials

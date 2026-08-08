@@ -34,9 +34,7 @@ def _upload_with_progress(mega, file: str):
 
 	def _do_upload():
 		try:
-			result[0] = retry(label="mega.upload", max_attempts=2)(mega.upload)(
-				file
-			)
+			result[0] = retry(label="mega.upload", max_attempts=2)(mega.upload)(file)
 		except Exception as e:
 			error[0] = e
 
@@ -114,6 +112,7 @@ def get_mega_session(credentials: Credentials) -> object:
 		with _mega_sessions_lock:
 			if key not in _mega_sessions:
 				from mega import Mega
+
 				mega = Mega()
 				retry(label="MEGA login", max_attempts=3)(mega.login)(
 					credentials.email, credentials.password

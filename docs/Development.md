@@ -11,7 +11,7 @@ MegaTemp/
 ├── MegaTemp.spec           # PyInstaller spec
 ├── Dockerfile              # Container build
 ├── docker-compose.yml      # Docker Compose with persistent volumes
-├── tests/                   # 163-test per-module test suite
+├── tests/                   # 172-test per-module test suite
 ├── services/
 │   ├── alive.py            # Keepalive service
 │   ├── upload.py           # File upload + public link + progress bar
@@ -31,9 +31,10 @@ MegaTemp/
 ├── docs/                   # Documentation
 └── .github/                # CI + community health files
     └── workflows/
-        ├── ruff.yml        # Ruff lint + format check
-        ├── build.yml       # PyInstaller build + release upload
-        └── release.yml     # Source tarball upload to releases
+        ├── build.yml        # PyInstaller build + release upload
+        ├── release.yml      # Source tarball upload to releases
+        ├── ruff.yml         # Ruff lint + format check
+        └── tests.yml        # pytest suite on Python 3.11 & 3.12
 ```
 
 ## Lint & format
@@ -62,7 +63,7 @@ pip install pytest pytest-asyncio
 pytest tests/ -v
 ```
 
-The test suite covers all modules (97 tests): models, fs, etc, menu,
+The test suite covers all modules (172 tests): models, fs, etc, menu,
 extract, upload, download, retry, password_strength, provider, notify, and CLI
 dispatch. Tests use `tmp_path` isolation, `capsys` for stdout capture, and
 `monkeypatch` for input mocking.
@@ -152,7 +153,7 @@ fully independent config file.
 Push a version tag to trigger an automated release:
 
 ```bash
-git tag v1.4.0
+git tag v1.5.0
 git push --tags
 ```
 
@@ -166,8 +167,8 @@ notes, and attaches:
 To update an existing tag to the current HEAD:
 
 ```bash
-	git tag -f v1.4.0 HEAD
-	git push origin v1.4.0 --force
+	git tag -f v1.5.0 HEAD
+	git push origin v1.5.0 --force
 ```
 
 > [!WARNING]

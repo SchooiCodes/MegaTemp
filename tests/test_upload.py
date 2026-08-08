@@ -1,5 +1,5 @@
-import pytest
 import os
+
 
 class TestUpload:
 	def test_upload_file_not_found(self, capsys, tmp_path):
@@ -13,6 +13,7 @@ class TestUpload:
 		assert "File not found" in captured.out
 		os.chdir(old)
 
+
 class TestUploadRetry:
 	def test_upload_file_not_found(self):
 		from services.upload import upload_file
@@ -25,4 +26,3 @@ class TestUploadRetry:
 # ======================================================================
 # main.py — CLI dispatch edge cases
 # ======================================================================
-

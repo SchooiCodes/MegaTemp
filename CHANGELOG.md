@@ -19,7 +19,7 @@ All notable changes to MegaTemp are documented here. This project adheres to
   `_fast_chunks` and verifies the patched upload reuses one session and emits
   payloads identical to the stock crypto.
 
-
+## [v1.4.0] - 2026-07-24
 
 ### Added
 - **Credential encryption** — optional `--encryption-password` / config
