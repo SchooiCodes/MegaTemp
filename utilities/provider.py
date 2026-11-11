@@ -15,10 +15,15 @@ from utilities.models import Credentials
 
 @dataclass
 class Mailbox:
-	"""A logged-in mailbox that can be polled for messages."""
+	"""A logged-in mailbox that can be polled for messages.
+
+	``token`` is provider-specific session state (a Guerrilla Mail
+	``sid_token``, a mail.tm password, ...) and is opaque to callers.
+	"""
 
 	provider: str = ""
 	address: str = ""
+	token: str = ""
 
 
 class EmailProvider(ABC):

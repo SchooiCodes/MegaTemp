@@ -36,7 +36,14 @@ class GuerrillaMailProvider(EmailProvider):
 		data = await asyncio.to_thread(_gm_call, {"f": "get_email_address"})
 		email: str = data.get("email_addr", "")
 		sid: str = data.get("sid_token", "")
-		return Credentials(email=email, emailPassword=sid, password="")
+		# A real MEGA password: an empty string fails the browser form (B12).
+		from utilities.password_strength import generate_password
+
+		return Credentials(
+			email=email,
+			emailPassword=sid,
+			password=generate_password(20),
+		)
 
 	async def login(self, credentials: Credentials) -> Mailbox:
 		"""Restore an existing Guerrilla Mail session.
@@ -56,6 +63,7 @@ class GuerrillaMailProvider(EmailProvider):
 		return Mailbox(
 			provider=self.name,
 			address=data.get("email_addr", email),
+			token=data.get("sid_token", credentials.emailPassword),
 		)
 
 	async def get_message(self, mailbox: Mailbox) -> object:
@@ -64,7 +72,7 @@ class GuerrillaMailProvider(EmailProvider):
 		Returns a dict with keys: mail_id, mail_from, mail_subject, mail_body.
 		Raises LookupError if no unread messages are available.
 		"""
-		sid = mailbox.address
+		sid = mailbox.token
 		data = await asyncio.to_thread(
 			_gm_call, {"f": "check_email", "seq": "0", "sid_token": sid}
 		)

@@ -91,32 +91,47 @@ class MailTmProvider(EmailProvider):
 		credentials = Credentials()
 		credentials.email = account.address
 		credentials.emailPassword = account.password
-		from utilities.web import get_random_string
+		# MEGA's strength meter rejects alphanumeric-only passwords, so use the
+		# same generator as the interactive "generate password" action.
+		from utilities.password_strength import generate_password
 
-		credentials.password = get_random_string(14)
+		credentials.password = generate_password(20)
 		credentials.id = account.id_
 		return credentials
 
 	async def login(self, credentials: Credentials) -> Mailbox:
 		"""Log into an existing mail.tm inbox."""
-		mail = pymailtm.MailTm()
+		# pymailtm has no MailTm.login(); Account(id, address, password) is the
+		# supported way to restore a session.
 		account = await asyncio.to_thread(
-			mail.login, credentials.email, credentials.emailPassword
+			pymailtm.Account,
+			credentials.id,
+			credentials.email,
+			credentials.emailPassword,
 		)
-		return Mailbox(provider=self.name, address=account.id_)
+		return Mailbox(
+			provider=self.name,
+			address=account.address,
+			token=account.password,
+		)
 
 	async def get_message(self, mailbox: Mailbox) -> object:
-		"""Fetch the first unread message, or raise."""
-		mail = pymailtm.MailTm()
-		account = await asyncio.to_thread(mail.login, mailbox.address, "")
-		message = await asyncio.to_thread(account.get_message)
-		if message is None:
+		"""Fetch the first message, or raise LookupError when none arrived."""
+		account = await asyncio.to_thread(
+			pymailtm.Account,
+			"",
+			mailbox.address,
+			mailbox.token,
+		)
+		messages = await asyncio.to_thread(account.get_messages)
+		if not messages:
 			raise LookupError("No messages")
+		message = messages[0]
 		return {
-			"mail_id": message.id,
+			"mail_id": message.id_,
 			"mail_from": message.from_,
 			"mail_subject": message.subject,
-			"mail_body": message.body,
+			"mail_body": message.text or message.html,
 		}
 
 
