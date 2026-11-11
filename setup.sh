@@ -20,29 +20,18 @@ echo "==> Creating virtualenv ($VENV_DIR)..."
 echo "==> Installing requirements..."
 "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
 "$VENV_DIR/bin/pip" install -r requirements.txt
+# mega.py pins tenacity<6, which crashes on Python >= 3.11.
+"$VENV_DIR/bin/pip" install 'tenacity>=9.0.0' --upgrade
 
 echo "==> Creating credentials directory..."
 mkdir -p credentials
 
 echo "==> Generating default config..."
 if [ ! -f config.json ]; then
-	cat > config.json <<'CONFIG'
-{
-	"schemaVersion": 1,
-	"executablePath": "",
-	"accountFormat": "",
-	"proxy": "",
-	"proxyFile": "",
-	"proxyPerAttempt": false,
-	"maxAttempts": 4,
-	"csvExport": false,
-	"visibleBrowser": false,
-	"emailProvider": "mailtm"
-}
-CONFIG
+	"$VENV_DIR/bin/python" -c "from utilities.fs import write_default_config; write_default_config()"
 	echo "config.json created."
 else
-	echo "config.json already exists — skipping."
+	echo "config.json already exists - skipping."
 fi
 
 echo ""

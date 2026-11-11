@@ -27,7 +27,8 @@ coverage:
 	$(PYTHON) -m pytest --tb=short --cov=. --cov-report=html --cov-report=term-missing -k "not test_main_verbose_flag"
 
 clean:
-	rm -rf credentials/ tmp/ loop_state.json dist/ build/ *.spec htmlcov/ .coverage
+	rm -rf credentials/ tmp/ loop_state.json dist/ build/ htmlcov/ .coverage
+	find . -maxdepth 1 -name '*.spec' ! -name 'MegaTemp.spec' -delete
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
 docker-build:

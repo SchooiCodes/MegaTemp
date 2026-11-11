@@ -1,7 +1,12 @@
-Faker>=13.11.1
-pymailtm>=1.0.2
-pyppeteer>=1.0.2
-psutil>=5.9.3
-mega.py>=1.0.8
-pyinstaller>=6.0.0 ; sys_platform != "emscripten"
+Faker>=13.11.1,<40
+pymailtm>=1.0.2,<2
+pyppeteer==1.0.2
+pyee<12
+psutil>=5.9.3,<8
+mega.py>=1.0.8,<2
 pyperclip>=1.8.2 ; sys_platform != "emscripten"
+
+# mega.py declares tenacity<6, which uses @asyncio.coroutine (removed in
+# Python 3.11). utilities/compat.py restores it, and CI/setup.sh upgrade
+# tenacity to >=9 after the install. Do not pin tenacity here: pip would
+# reject the conflict with mega.py before the shim can help.

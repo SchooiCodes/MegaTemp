@@ -41,7 +41,7 @@ python main.py
 | **Single account** | `python main.py` — opens the interactive TUI menu |
 | **Mass generation** | Menu → *Loop Create*, or `python main.py -l 10` |
 | **Parallel mode** | `python main.py -l 50 -j 5` (5 concurrent workers) |
-| **Proxy rotation** | `python main.py -l 20 --proxy-file proxies.txt` |
+| **Proxy rotation** | `python main.py -l 20 --proxy-file proxies.txt` (one proxy per worker; add `--proxy-per-attempt` to relaunch with a fresh proxy on every retry) |
 | **Resume batches** | `python main.py -l 20 --resume` (recover interrupted runs) |
 | **File upload** | `python main.py -f photo.jpg -p` (uploads + public link) |
 | **Directory upload** | Menu → *Upload Directory* + account picker |
@@ -55,16 +55,16 @@ python main.py
 | **Config editor** | Menu → *Settings → Edit Config* |
 | **Config validation** | Warns on bad paths, improbable values, proxy format on load |
 | **Prebuilt binaries** | [Releases](https://github.com/SchooiCodes/MegaTemp/releases) — no Python required |
-| **Auto-update** | Frozen EXE checks for new releases on startup |
+| **Auto-update** | Frozen EXE checks for new releases in the TUI, or run `--update` explicitly |
 | **Cloud browser** | Menu → *Browse Cloud* — list + download cloud files |
 | **CLI cloud access** | `--list-cloud`, `--download-cloud ID`, `--download-dest DIR` |
 | **Health dashboard** | Menu → *Storage Info* — per-account status, quota, age |
 | **Account notes/tags** | Menu → *View Credentials* — press `n` for notes, `t` for tags |
 | **Search accounts** | Menu → *View Credentials* — press `/` to filter |
-| **Batch delete** | Menu → *View Credentials* — press `a` to delete all filtered |
+| **Batch delete** | Menu → *View Credentials* — press `a`, then type the shown count to confirm |
 | **Password strength** | Viewer shows strength label when passwords are revealed |
-| **Desktop notifications** | On loop/parallel completion (Linux, macOS, Windows) |
-| **Upload progress bar** | Animated `[████░░░░] 60%` during file upload |
+| **Desktop notifications** | Opt-in `--notify` on loop/parallel completion (Linux, macOS, Windows) |
+| **Upload progress** | Elapsed-time progress while uploading, then final size |
 | **Tab completion** | Press Tab when entering file paths in upload/download prompts |
 | **Regex search** | Press `r` to toggle regex mode in credentials viewer |
 | **Account management** | Menu → *Account Management*: delete, change password, create folder |
@@ -139,7 +139,7 @@ Settings (per-session): max retries, visible browser, CSV export toggle.
 | `--health` | Show health dashboard (quota, age, status) from CLI |
 | `--json` | JSON output for --health |
 | `--quiet` | Suppress non-essential output for scripting |
-| `--mail-timeout <s>` | Seconds to wait for confirmation email (default 120) |
+| `--mail-timeout <s>` | Seconds to wait for confirmation email (default: `mailTimeout` in `config.json`) |
 | `--webhook-url <url>` | POST JSON payload on registration success/failure |
 | `--proxy-url <url>` | Auto-fetch proxy list from a remote URL |
 | `--encryption-password <pw>` | Encrypt saved passwords at rest |

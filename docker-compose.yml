@@ -1,27 +1,23 @@
-version: "3.9"
-
 services:
   megatem:
     build: .
     image: megatem:latest
     container_name: megatem
     volumes:
-      # Persist credentials across container restarts
+      # Persist credentials across container restarts. Config is written by
+      # the app inside the container, so we do not bind-mount a host file
+      # (a missing host path would be created as a directory by Docker).
       - ./credentials:/app/credentials
-      - ./config.json:/app/config.json
-      # Mount credentials directory so the host can access exported files
-      - ./credentials.txt:/app/credentials.txt
     # Override the default --help command
     command: ["python", "main.py"]
     # For interactive TUI mode, allocate a TTY
     stdin_open: true
     tty: true
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'python.*main.py' || exit 1"]
+      # pgrep is not present in python:3.12-slim; importing main is enough to
+      # prove the interpreter and dependencies are healthy.
+      test: ["CMD", "python", "-c", "import main"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
-    # Capabilities needed for Chromium
-    cap_add:
-      - SYS_ADMIN
