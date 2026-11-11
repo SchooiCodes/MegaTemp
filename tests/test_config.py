@@ -84,7 +84,7 @@ class TestConfigMigrationV2:
 		assert migrated["schemaVersion"] == 3
 		assert migrated["webhookUrl"] == ""
 		assert migrated["quiet"] is False
-		assert migrated["mailTimeout"] == 45
+		assert migrated["mailTimeout"] == 120
 		assert migrated["jsonlExport"] is False
 
 
@@ -104,7 +104,7 @@ class TestConfigMailTimeout:
 		from utilities.models import Config
 
 		cfg = Config()
-		assert cfg.mailTimeout == 45
+		assert cfg.mailTimeout == 120
 
 
 class TestConfigDefaults:

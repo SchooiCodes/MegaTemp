@@ -60,7 +60,7 @@ class TestTypes:
 		assert c.jsonlExport is False
 		assert c.visibleBrowser is False
 		assert c.emailProvider == "mailtm"
-		assert c.mailTimeout == 45
+		assert c.mailTimeout == 120
 		assert c.quiet is False
 		assert c.webhookUrl == ""
 
@@ -95,7 +95,7 @@ class TestTypes:
 		assert d["jsonlExport"] is False
 		assert d["visibleBrowser"] is False
 		assert d["emailProvider"] == "mailtm"
-		assert d["mailTimeout"] == 45
+		assert d["mailTimeout"] == 120
 		assert d["quiet"] is False
 		assert d["webhookUrl"] == ""
 
@@ -110,7 +110,7 @@ class TestTypes:
 		assert migrated["maxAttempts"] == 4
 		assert migrated["emailProvider"] == "mailtm"
 		assert migrated["jsonlExport"] is False
-		assert migrated["mailTimeout"] == 45
+		assert migrated["mailTimeout"] == 120
 		assert migrated["quiet"] is False
 		assert migrated["webhookUrl"] == ""
 

@@ -63,17 +63,22 @@ def gencash(
 	threshold = threshold_from_easiness(easiness)
 	buf = _build_buffer(token)
 	stop = __import__("threading").Event()
-	with ThreadPoolExecutor(max_workers=max_workers) as pool:
-		futures = []
-		for w in range(max_workers):
-			futures.append(
-				pool.submit(_search_worker, buf, threshold, w, max_workers, stop)
-			)
+	pool = ThreadPoolExecutor(max_workers=max_workers)
+	futures = [
+		pool.submit(_search_worker, buf, threshold, w, max_workers, stop)
+		for w in range(max_workers)
+	]
+	try:
 		for f in as_completed(futures, timeout=timeout_seconds):
 			result = f.result()
 			if result is not None:
 				return result
-	raise TimeoutError("hashcash solving timed out")
+		raise TimeoutError("hashcash solving timed out")
+	finally:
+		# Always stop the workers: the old code left them spinning forever on
+		# the timeout path, and ``shutdown(wait=True)`` then hung the caller.
+		stop.set()
+		pool.shutdown(wait=False, cancel_futures=True)
 
 
 def solve_hashcash_challenge(header_value: str) -> str:

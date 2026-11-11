@@ -8,19 +8,29 @@ import subprocess
 from dataclasses import dataclass
 from urllib.request import urlopen, Request
 import sys
-import psutil
 import contextvars
 from contextlib import contextmanager
 
+from utilities import console
 from utilities.models import Colours, Credentials
 
 VERSION = "v1.5.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 
+# Desktop notifications are opt-in (see set_notify_enabled) because popups are
+# intrusive, especially on Windows where a MessageBox steals focus.
+_NOTIFY_ENABLED = False
+
+
+def set_notify_enabled(value: bool) -> None:
+	"""Enable/disable desktop notifications (default: disabled)."""
+	global _NOTIFY_ENABLED
+	_NOTIFY_ENABLED = value
+
 
 def notify(title: str, message: str) -> None:
 	"""Show a desktop notification (best-effort, fire-and-forget)."""
-	if _QUIET:
+	if _QUIET or not _NOTIFY_ENABLED:
 		return
 	import sys as _sys
 	import subprocess as _sp
@@ -44,10 +54,9 @@ def notify(title: str, message: str) -> None:
 					timeout=5,
 					capture_output=True,
 				)
-			elif _sys.platform == "win32":
-				import ctypes as _ct
-
-				_ct.windll.user32.MessageBoxW(0, message, title, 0x40 | 0x1000)
+			# Windows: intentionally no popup. A MessageBoxW steals focus from
+			# the terminal and cannot be dismissed from the console. Users can
+			# opt into notifications with --notify once a toast backend exists.
 		except Exception:
 			pass
 
@@ -234,6 +243,11 @@ class ProxyManager:
 		return len(self._proxies) > 0
 
 	@property
+	def per_attempt(self) -> bool:
+		"""True when a new proxy should be used for every attempt."""
+		return self._per_attempt
+
+	@property
 	def count(self) -> int:
 		return len(self._proxies)
 
@@ -297,11 +311,15 @@ def auto_update() -> None:
 	if latest is None or latest == VERSION:
 		return  # up to date or unreachable
 
-	# Notify and ask
+	# Notify and ask. Only prompt on an interactive terminal; in scripts and
+	# CI we print a one-line notice and continue instead of blocking on stdin.
 	p_print(
 		f"New version available: {latest} (you have {VERSION})",
 		Colours.WARNING,
 	)
+	if not (sys.stdin and sys.stdin.isatty()):
+		p_print("Run `MegaTemp --update` on a TTY to install it.", Colours.WARNING)
+		return
 	answer = input("Update now? [Y/n]: ").strip().lower()
 	if answer in ("n", "no"):
 		return
@@ -400,26 +418,43 @@ def auto_update() -> None:
 	sys.exit(0)
 
 
-def delete_default(credentials: Credentials) -> None:
-	"""Deletes the default welcome file.
+def delete_default(credentials: Credentials) -> bool:
+	"""Delete MEGA's default "welcome" file, if one is present.
 
-	The default account has no welcome file (or the mega.py library call
-	fails), so guard every step and treat "nothing to delete" as success.
+	The old implementation deleted the *first* node in the root, which could
+	destroy a file the user just uploaded. We now only delete a root file whose
+	(decrypted) name looks like the welcome document, and return whether
+	anything was removed.
 	"""
 	from services.upload import get_mega_session
 
 	try:
 		mega = get_mega_session(credentials)
 	except Exception:
-		return
+		return False
 	try:
-		pdf = mega.get_files_in_node(2)
-		if not pdf:
-			return
-		key = list(pdf.keys())[0]
-		mega.destroy(key)
+		files = mega.get_files_in_node(2) or {}
 	except Exception:
-		return
+		return False
+
+	for node_id, info in files.items():
+		name = ""
+		try:
+			attrs = info.get("a") or {}
+			name = attrs.get("n") or ""
+		except AttributeError:
+			name = ""
+		lowered = name.lower()
+		if not name:
+			continue
+		if "welcome" in lowered or "getting-started" in lowered:
+			try:
+				mega.destroy(node_id)
+				return True
+			except Exception:
+				return False
+	# No recognisable welcome file: leave the account untouched.
+	return False
 
 
 def reinstall_tenacity() -> None:
@@ -459,6 +494,8 @@ def kill_process(matches: list) -> None:
 	Used to release Chrome's crashpad lock files before clearing tmp. Never
 	kills the current process or its own parents.
 	"""
+	import psutil  # imported lazily: ~40 ms of startup for every command
+
 	current_pid = os.getpid()
 	killed = False
 	for process in psutil.process_iter():
@@ -484,15 +521,40 @@ def kill_process(matches: list) -> None:
 		p_print("No matching processes to kill.", Colours.OKCYAN)
 
 
-# ── Quiet mode ────────────────────────────────────────────────────────
-# When set, p_print() / separator() only show WARNING/FAIL messages.
+# ── Quiet / JSON mode ─────────────────────────────────────────────────
+# When quiet is set, p_print() / separator() only show WARNING/FAIL messages.
 _QUIET = False
+
+# Captured before console.init() can blank the colour constants, so quiet mode
+# keeps working when colour is disabled.
+_IMPORTANT_COLOURS = (Colours.WARNING, Colours.FAIL)
+
+# When set, all human-readable output goes to stderr so stdout stays valid
+# JSON for --health --json / scripting.
+_JSON_MODE = False
 
 
 def set_quiet(value: bool) -> None:
 	"""Enable/disable quiet mode (suppresses non-essential output)."""
 	global _QUIET
 	_QUIET = value
+
+
+def set_json_mode(value: bool) -> None:
+	"""Route human output to stderr so stdout only contains JSON."""
+	global _JSON_MODE
+	_JSON_MODE = value
+
+
+def _out_stream():
+	return sys.stderr if _JSON_MODE else sys.stdout
+
+
+def _stdout_is_tty() -> bool:
+	try:
+		return bool(sys.stdout.isatty())
+	except (AttributeError, ValueError):
+		return False
 
 
 # ── Per-task print buffering ──────────────────────────────────────────
@@ -506,13 +568,15 @@ _print_buffer: contextvars.ContextVar[list | None] = contextvars.ContextVar(
 
 def _capture_or_print(text: str, colour: str) -> None:
 	"""Write *text* to the per-task buffer, or print directly."""
-	if _QUIET and colour not in (Colours.FAIL, Colours.WARNING):
+	if _QUIET and colour not in _IMPORTANT_COLOURS:
 		return
 	buf = _print_buffer.get()
 	if buf is not None:
 		buf.append((text, colour))
 	else:
-		print(colour + text + Colours.ENDC)
+		stream = _out_stream()
+		stream.write(colour + text + Colours.ENDC + "\n")
+		stream.flush()
 
 
 def flush_print_buffer() -> list[tuple[str, str]] | None:
@@ -558,15 +622,17 @@ def separator(title: str = "", colour: str = Colours.HEADER, width: int = 60) ->
 
 	Used to visually break the output into scannable phases, e.g.
 	`──────────────── Registration attempt 1/4 ────────────────`.
+	Falls back to `-` when the terminal cannot render box drawing.
 	"""
+	glyph = "─" if console.unicode_ok() else "-"
 	if title:
 		title = f" {title} "
 		pad = max(0, width - len(title))
 		left = pad // 2
 		right = pad - left
-		line = ("─" * left) + title + ("─" * right)
+		line = (glyph * left) + title + (glyph * right)
 	else:
-		line = "─" * width
+		line = glyph * width
 	_capture_or_print(line, colour)
 
 
@@ -595,26 +661,44 @@ def send_webhook(url: str, event: str, data: dict) -> None:
 
 
 def clear_console() -> None:
-	"""Clears console using ANSI escape sequences."""
-	sys.stdout.write("\x1b[2J\x1b[H")
-	sys.stdout.flush()
+	"""Clears console using ANSI escape sequences (no-op when not a TTY)."""
+	if not _stdout_is_tty():
+		return
+	_out_stream().write("\x1b[2J\x1b[H")
+	_out_stream().flush()
+
+
+_last_status_emit = 0.0
 
 
 def status_line(text: str, colour: str = Colours.OKCYAN) -> None:
 	"""Overwrites the current terminal line in place (no newline).
 
 	Handy for high-frequency polling updates so we don't spam the scrollback.
-	Call `clear_status_line()` (or print a newline) when finished.
+	When stdout is redirected there is no line to overwrite, so the update is
+	throttled to one newline-terminated line every few seconds instead.
 	"""
+	global _last_status_emit
+	if not _stdout_is_tty():
+		now = time.monotonic()
+		if now - _last_status_emit < 3.0:
+			return
+		_last_status_emit = now
+		_capture_or_print(text, colour)
+		return
 	# \r returns to column 0; pad to clear any leftover from a longer prior line.
-	sys.stdout.write("\r\033[K" + colour + text + Colours.ENDC)
-	sys.stdout.flush()
+	stream = _out_stream()
+	stream.write("\r\033[K" + colour + text + Colours.ENDC)
+	stream.flush()
 
 
 def clear_status_line() -> None:
 	"""Clears the in-place status line and moves to a fresh line."""
-	sys.stdout.write("\r\033[K")
-	sys.stdout.flush()
+	if not _stdout_is_tty():
+		return
+	stream = _out_stream()
+	stream.write("\r\033[K")
+	stream.flush()
 
 
 LOOP_STATE_FILE = "loop_state.json"

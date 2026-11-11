@@ -13,6 +13,7 @@ import os
 import sys
 import select
 
+from utilities import console
 from utilities.etc import Colours, p_print
 
 _WINDOWS = sys.platform == "win32"
@@ -34,11 +35,46 @@ ESCAPE = "\x1b"
 # Number keys 1-9 as jump shortcuts.
 _DIGIT_KEYS = tuple(str(i) for i in range(1, 10))
 
-# Box-drawing glyphs (all single-column in a Unicode terminal).
-TL, TR, BL, BR = "\u2554", "\u2557", "\u255a", "\u255d"
-ML, MR = "\u2551", "\u2551"
-MLS, MRS = "\u2560", "\u2563"
-HBAR = "\u2550"
+# Box-drawing glyphs (all single-column in a Unicode terminal). When the
+# terminal/encoding cannot render them (MEGATEMP_ASCII, TERM=dumb, legacy
+# Windows code pages) we fall back to ASCII so the menu still renders.
+_UNICODE_BOX = {
+	"TL": "\u2554",
+	"TR": "\u2557",
+	"BL": "\u255a",
+	"BR": "\u255d",
+	"ML": "\u2551",
+	"MR": "\u2551",
+	"MLS": "\u2560",
+	"MRS": "\u2563",
+	"HBAR": "\u2550",
+}
+_ASCII_BOX = {
+	"TL": "+",
+	"TR": "+",
+	"BL": "+",
+	"BR": "+",
+	"ML": "|",
+	"MR": "|",
+	"MLS": "+",
+	"MRS": "+",
+	"HBAR": "-",
+}
+
+
+def _box() -> dict[str, str]:
+	return _UNICODE_BOX if console.unicode_ok() else _ASCII_BOX
+
+
+TL, TR, BL, BR = (
+	_UNICODE_BOX["TL"],
+	_UNICODE_BOX["TR"],
+	_UNICODE_BOX["BL"],
+	_UNICODE_BOX["BR"],
+)
+ML, MR = _UNICODE_BOX["ML"], _UNICODE_BOX["MR"]
+MLS, MRS = _UNICODE_BOX["MLS"], _UNICODE_BOX["MRS"]
+HBAR = _UNICODE_BOX["HBAR"]
 
 # Pointer shown next to the highlighted item. ASCII `>` is exactly one column
 # wide everywhere, unlike arrows such as `\u25b8` which render as two columns
@@ -99,12 +135,18 @@ class Menu:
 		title,
 		items,
 		subtitle=None,
-		footer="Use \u2191\u2193 arrows \u2022 Enter to select \u2022 q to go back",
+		footer=None,
 		width=52,
 	):
 		self.title = title
 		self.items = items
 		self.subtitle = subtitle
+		if footer is None:
+			footer = (
+				"Use \u2191\u2193 arrows \u2022 Enter to select \u2022 q to go back"
+				if console.unicode_ok()
+				else "Use Up/Down arrows, Enter to select, q to go back"
+			)
 		self.footer = footer
 		self.width = width
 		self.selected = 0
@@ -172,13 +214,17 @@ class Menu:
 			sys.stdout.write(f"\x1b[{self._drawn_lines}A\x1b[J")
 
 		w = self.width
+		box = _box()
+		tl, tr, bl, br = box["TL"], box["TR"], box["BL"], box["BR"]
+		ml, mr = box["ML"], box["MR"]
+		mls, mrs, hbar = box["MLS"], box["MRS"], box["HBAR"]
 		lines = []
-		lines.append(f"{TL}{HBAR * (w + 2)}{TR}")
-		lines.append(f"{ML} {self.title.center(w)} {MR}")
-		lines.append(f"{MLS}{HBAR * (w + 2)}{MRS}")
+		lines.append(f"{tl}{hbar * (w + 2)}{tr}")
+		lines.append(f"{ml} {self.title.center(w)} {mr}")
+		lines.append(f"{mls}{hbar * (w + 2)}{mrs}")
 		if self.subtitle:
-			lines.append(f"{ML} {self.subtitle.ljust(w)} {MR}")
-			lines.append(f"{MLS}{HBAR * (w + 2)}{MRS}")
+			lines.append(f"{ml} {self.subtitle.ljust(w)} {mr}")
+			lines.append(f"{mls}{hbar * (w + 2)}{mrs}")
 
 		for idx, item in enumerate(self.items):
 			pointer = POINTER_ON if idx == self.selected else POINTER_OFF
@@ -204,13 +250,13 @@ class Menu:
 			if pad < 0:
 				pad = 0
 			row = f"{row}{' ' * pad}"
-			lines.append(f"{ML} {row} {MR}")
+			lines.append(f"{ml} {row} {mr}")
 
-		lines.append(f"{MLS}{HBAR * (w + 2)}{MRS}")
+		lines.append(f"{mls}{hbar * (w + 2)}{mrs}")
 		desc = self.items[self.selected].description
 		foot = desc if desc else (self.footer or "")
-		lines.append(f"{ML} {foot.ljust(w)} {MR}")
-		lines.append(f"{BL}{HBAR * (w + 2)}{BR}")
+		lines.append(f"{ml} {foot.ljust(w)} {mr}")
+		lines.append(f"{bl}{hbar * (w + 2)}{br}")
 
 		sys.stdout.write("\n".join(lines) + "\n")
 		sys.stdout.flush()
@@ -218,38 +264,53 @@ class Menu:
 		self._full_redraw = False
 
 	def run(self) -> object | None:
-		"""Run the menu loop; returns the selected callback's result."""
+		"""Run the menu loop; returns the selected callback's result.
+
+		Raises ``RuntimeError`` when stdin is not a terminal, so callers can
+		fall back to a non-interactive mode instead of hanging on input.
+		"""
+		if not (sys.stdin and sys.stdin.isatty()):
+			raise RuntimeError(
+				"Interactive menu requires a terminal (stdin is not a TTY). "
+				"Use CLI flags (e.g. --health, --loop, --keepalive) instead."
+			)
 		self._full_redraw = True
-		while True:
-			self._render()
-			key = self._get_key()
-			if key in UP:
-				self.selected = (self.selected - 1) % len(self.items)
-				self._full_redraw = False
-			elif key in DOWN:
-				self.selected = (self.selected + 1) % len(self.items)
-				self._full_redraw = False
-			elif key in _DIGIT_KEYS:
-				idx = int(key) - 1
-				if 0 <= idx < len(self.items):
-					self.selected = idx
-				self._full_redraw = False
-			elif key in (ENTER, *RIGHT):
-				item = self.items[self.selected]
-				if item.callback is None:
-					continue
-				try:
-					result = item.callback()
-				finally:
-					# Always force a full repaint on the next loop iteration,
-					# even if the callback raised an exception.
-					self._full_redraw = True
-				if result is _BACK:
+		sys.stdout.write("\x1b[?25l")  # hide cursor while redrawing
+		try:
+			while True:
+				self._render()
+				key = self._get_key()
+				if key in UP:
+					self.selected = (self.selected - 1) % len(self.items)
+					self._full_redraw = False
+				elif key in DOWN:
+					self.selected = (self.selected + 1) % len(self.items)
+					self._full_redraw = False
+				elif key in _DIGIT_KEYS:
+					idx = int(key) - 1
+					if 0 <= idx < len(self.items):
+						self.selected = idx
+					self._full_redraw = False
+				elif key in (ENTER, *RIGHT):
+					item = self.items[self.selected]
+					if item.callback is None:
+						continue
+					try:
+						result = item.callback()
+					finally:
+						# Always force a full repaint on the next loop iteration,
+						# even if the callback raised an exception.
+						self._full_redraw = True
+					if result is _BACK:
+						return _BACK
+				elif key in ("q", "Q", ESCAPE):
 					return _BACK
-			elif key in ("q", "Q", ESCAPE):
-				return _BACK
-			elif key == "\x03":  # Ctrl+C
-				return _BACK
+				elif key == "\x03":  # Ctrl+C
+					return _BACK
+		finally:
+			# Always restore the cursor and colours, even if a callback raised.
+			sys.stdout.write("\x1b[?25h" + Colours.ENDC + "\n")
+			sys.stdout.flush()
 
 
 def prompt_text(message: str, default: str = "") -> str:

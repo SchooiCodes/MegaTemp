@@ -1,5 +1,22 @@
 from utilities.hashcash import solve_hashcash_challenge
-from mega.errors import RequestError
+from mega.errors import RequestError, _CODE_TO_DESCRIPTIONS
+
+
+def _raise_request_error(code: int, status: int | None = None, message: str = ""):
+	"""Raise a RequestError for a MEGA error code.
+
+	``mega.errors.RequestError`` takes a *single* argument: a code that must
+	exist in its private description table. Unknown codes otherwise raise
+	``KeyError`` (or ``TypeError`` if two args are passed, which is what the
+	original patch did for every API error).
+	"""
+	safe_code = code if code in _CODE_TO_DESCRIPTIONS else -1
+	err = RequestError(safe_code)
+	if message:
+		err.message = message
+	err.code = code
+	err.http_status = status
+	raise err
 
 
 def _patch_api_request(original_method):
@@ -25,7 +42,11 @@ def _patch_api_request(original_method):
 		if response.status_code == 402:
 			hc_header = response.headers.get("X-Hashcash")
 			if not hc_header:
-				raise RequestError("HTTP 402 without X-Hashcash header")
+				_raise_request_error(
+					-1,
+					response.status_code,
+					"HTTP 402 without X-Hashcash header",
+				)
 			solution = solve_hashcash_challenge(hc_header)
 			token = hc_header.split(":", 3)[3]
 			headers = {"X-Hashcash": f"1:{token}:{solution}"}
@@ -37,7 +58,20 @@ def _patch_api_request(original_method):
 				timeout=self.timeout,
 			)
 
-		json_resp = json.loads(response.text)
+		if response.status_code == 402:
+			_raise_request_error(
+				-1,
+				response.status_code,
+				"HTTP 402: MEGA rejected the hashcash solution",
+			)
+		try:
+			json_resp = json.loads(response.text)
+		except ValueError:
+			_raise_request_error(
+				-1,
+				response.status_code,
+				f"Non-JSON MEGA response: {response.text[:200]!r}",
+			)
 		try:
 			if isinstance(json_resp, list):
 				int_resp = json_resp[0] if isinstance(json_resp[0], int) else None
@@ -51,7 +85,7 @@ def _patch_api_request(original_method):
 		if int_resp is not None:
 			if int_resp == -3:
 				raise RuntimeError("Request failed, retrying")
-			raise RequestError(int_resp, response.status_code)
+			_raise_request_error(int_resp, response.status_code)
 		return json_resp[0]
 
 	return wrapper
@@ -106,7 +140,6 @@ def _patch_upload(original_method):
 		from mega.crypto import (
 			a32_to_str,
 			str_to_a32,
-			makebyte,
 			get_chunks,
 			base64_url_encode,
 			encrypt_attr,
@@ -146,17 +179,16 @@ def _patch_upload(original_method):
 					chunk = fh.read(chunk_size)
 
 				if file_size > 0:
-					# last CBC block of this chunk, used for the file MAC chain
+					# Last CBC block of this chunk, used for the file MAC chain.
+					# ``last_start`` is the beginning of the final (possibly
+					# partial) 16-byte block; the old ``range(0, len-16, 16)``
+					# left ``i`` unbound when the last chunk was <= 16 bytes.
+					last_start = ((len(chunk) - 1) // 16) * 16 if chunk else 0
 					encryptor = AES.new(k_str, AES.MODE_CBC, iv_str)
-					for i in range(0, len(chunk) - 16, 16):
+					for i in range(0, last_start, 16):
 						encryptor.encrypt(chunk[i : i + 16])
-					if file_size > 16:
-						i += 16
-					else:
-						i = 0
-					block = chunk[i : i + 16]
-					if len(block) % 16:
-						block += makebyte("\0" * (16 - len(block) % 16))
+					block = chunk[last_start:]
+					block += b"\0" * (-len(block) % 16)
 					encrypted_blocks[idx] = encryptor.encrypt(block)
 
 					# CTR-encrypt with the counter positioned at this chunk
@@ -230,7 +262,16 @@ def _patch_upload(original_method):
 
 
 def patch_mega():
+	"""Install the hashcash-aware API wrapper and faster uploader.
+
+	Idempotent: importing the module twice (or reloading it) must not wrap
+	``Mega`` a second time, which would double every HTTP request and break
+	the 402 retry path.
+	"""
 	from mega import Mega
 
+	if getattr(Mega, "_mt_patched", False):
+		return
 	Mega._api_request = _patch_api_request(Mega._api_request)
 	Mega.upload = _patch_upload(Mega.upload)
+	Mega._mt_patched = True

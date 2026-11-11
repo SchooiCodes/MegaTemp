@@ -1,6 +1,7 @@
 """All functions related to the browser"""
 
 import asyncio
+from collections import OrderedDict
 import re
 import string
 import random
@@ -25,11 +26,27 @@ from utilities.etc import (
 	clear_status_line,
 )
 
+# Fixed polling interval for mail.tm. Config.mailTimeout is expressed in
+# *seconds*, so callers convert with mail_timeout_to_attempts().
+POLL_INTERVAL = 2.0
+
 # Module-level verbosity flag, toggled from main.py via set_verbose().
 _VERBOSE = False
 
+# One reusable HTTP session (connection pooling) for the mail.tm REST calls.
+_session = requests.Session()
+
 # Lazily loaded provider ABC (avoids circular import at module level).
 _provider_getter = None
+
+
+def mail_timeout_to_attempts(seconds: float) -> int:
+	"""Convert a mail timeout in seconds to a poll-attempt count."""
+	try:
+		seconds = float(seconds)
+	except (TypeError, ValueError):
+		seconds = 120.0
+	return max(1, round(seconds / POLL_INTERVAL))
 
 
 def _get_provider(name: str) -> "EmailProvider":
@@ -279,25 +296,54 @@ async def initial_setup(
 			pass
 
 
+# Reusable mail.tm Accounts per identity. The old singleton returned the wrong
+# mailbox in --parallel runs when another worker created a new address.
+_mail_accounts: OrderedDict[tuple[str, str], pymailtm.Account] = OrderedDict()
+_MAIL_CACHE_LIMIT = 64
+
+
+def _mail_cache_key(credentials: Credentials) -> tuple[str, str]:
+	return (credentials.email, credentials.emailPassword)
+
+
+def _cache_mail_account(credentials: Credentials, account: pymailtm.Account) -> None:
+	key = _mail_cache_key(credentials)
+	_mail_accounts[key] = account
+	_mail_accounts.move_to_end(key)
+	while len(_mail_accounts) > _MAIL_CACHE_LIMIT:
+		_mail_accounts.popitem(last=False)
+
+
+def clear_mail_cache(email: str | None = None) -> None:
+	"""Forget cached mail.tm sessions (all, or those for *email*)."""
+	if email is None:
+		_mail_accounts.clear()
+		return
+	for key in [k for k in _mail_accounts if k[0] == email]:
+		_mail_accounts.pop(key, None)
+
+
 async def mail_login(
 	credentials: Credentials, provider_name: str = "mailtm"
 ) -> object | None:
 	"""Log into the email account and return a mailbox object.
 
 	For mail.tm (default): retries with backoff and caches the session
-	across retries.  Other providers route through the EmailProvider ABC.
+	per-email across retries.  Other providers route through the EmailProvider
+	ABC.
 	"""
-	global _last_mail_account, _last_mail_password
-
 	if provider_name != "mailtm":
 		prov = _get_provider(provider_name)
 		if prov is not None:
 			return await prov.login(credentials)
 		raise ValueError(f"Unknown email provider: {provider_name}")
 
-	if _last_mail_account is not None:
+	key = _mail_cache_key(credentials)
+	cached = _mail_accounts.get(key)
+	if cached is not None:
+		_mail_accounts.move_to_end(key)
 		_log("[mail] reusing cached mail.tm account across retries.", Colours.OKCYAN)
-		return _last_mail_account
+		return cached
 
 	max_retries = 5
 	for attempt in range(1, max_retries + 1):
@@ -309,9 +355,7 @@ async def mail_login(
 				credentials.emailPassword,
 			)
 			_log(f"[mail] logged into mailbox {credentials.email}", Colours.OKGREEN)
-			# Cache for next retry.
-			_last_mail_account = mail
-			_last_mail_password = credentials.emailPassword
+			_cache_mail_account(credentials, mail)
 			return mail
 		except CouldNotGetAccountException:
 			_log(
@@ -325,7 +369,11 @@ async def mail_login(
 	)
 
 
-async def get_mail(mail: object, max_attempts: int = 120) -> object:
+async def get_mail(
+	mail: object,
+	max_attempts: int = 120,
+	timeout_seconds: float | None = None,
+) -> object:
 	"""Get the latest email from the mailbox.
 
 	For mail.tm mailboxes (pymailtm Account objects), uses the existing
@@ -334,7 +382,12 @@ async def get_mail(mail: object, max_attempts: int = 120) -> object:
 
 	Polling interval: fixed 2s instead of exponential backoff so the
 	email is detected as soon as it arrives, not delayed by deep backoff.
+	Pass ``timeout_seconds`` to express the timeout in seconds instead of
+	attempts.
 	"""
+	if timeout_seconds is not None:
+		max_attempts = mail_timeout_to_attempts(timeout_seconds)
+
 	# If the mailbox has a provider attribute, it's from the ABC.
 	if hasattr(mail, "provider"):
 		_log("[mail] polling for confirmation email ...", Colours.HEADER)
@@ -344,7 +397,7 @@ async def get_mail(mail: object, max_attempts: int = 120) -> object:
 				try:
 					return await prov.get_message(mail)
 				except LookupError:
-					await asyncio.sleep(2)
+					await asyncio.sleep(POLL_INTERVAL)
 			raise LookupError("Confirmation email not received after polling.")
 		raise ValueError(f"Unknown provider: {mail.provider}")
 
@@ -363,7 +416,7 @@ async def get_mail(mail: object, max_attempts: int = 120) -> object:
 				f"[mail] waiting for confirmation email ({attempt}/{max_attempts})...",
 				Colours.WARNING,
 			)
-			await asyncio.sleep(2)
+			await asyncio.sleep(POLL_INTERVAL)
 
 	clear_status_line()
 	raise CouldNotGetMessagesException(
@@ -433,10 +486,6 @@ async def type_password(page: pyppeteer.page.Page, credentials: Credentials) -> 
 # Cache the mail.tm domain list so we don't hit /domains on every attempt.
 _mailtm_domains: list[str] | None = None
 
-# Reusable mail.tm Account across retries (session persistence).
-_last_mail_account: pymailtm.Account | None = None
-_last_mail_password: str = ""
-
 
 async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 	"""Generate a disposable inbox and return credentials.
@@ -445,44 +494,41 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 	When using mail.tm, unique addresses with high-entropy suffixes are
 	used to avoid HTTP 422 collisions.
 	"""
-	global _mailtm_domains, _last_mail_account, _last_mail_password
+	global _mailtm_domains
 
 	# Route non-mail.tm providers through the EmailProvider ABC.
 	if provider_name != "mailtm":
-		_last_mail_account = None
-		_last_mail_password = ""
-
 		prov = _get_provider(provider_name)
 		if prov is not None:
 			return await prov.create_account()
 		raise ValueError(f"Unknown email provider: {provider_name}")
 
 	# --- mail.tm specific ---
-	if _last_mail_account is None:
-		if _mailtm_domains is None:
-			_log("[mail] fetching available domains ...", Colours.HEADER)
-			try:
-				resp = await asyncio.to_thread(
-					requests.get,
-					"https://api.mail.tm/domains",
-					headers={"accept": "application/ld+json"},
-					timeout=15,
-				)
-				resp.raise_for_status()
-				_mailtm_domains = [d["domain"] for d in resp.json()["hydra:member"]]
-			except Exception as e:
-				raise CouldNotGetAccountException(
-					f"Could not fetch mail.tm domains: {e}"
-				) from e
+	if _mailtm_domains is None:
+		_log("[mail] fetching available domains ...", Colours.HEADER)
+		try:
+			resp = await asyncio.to_thread(
+				_session.get,
+				"https://api.mail.tm/domains",
+				headers={"accept": "application/ld+json"},
+				timeout=15,
+			)
+			resp.raise_for_status()
+			_mailtm_domains = [d["domain"] for d in resp.json()["hydra:member"]]
+		except Exception as e:
+			raise CouldNotGetAccountException(
+				f"Could not fetch mail.tm domains: {e}"
+			) from e
 
 	max_retries = 10
 	last_error = None
+	account = None
 	for attempt in range(1, max_retries + 1):
 		try:
 			address = _unique_mail_address(_mailtm_domains)
 			password = get_random_string(10)
 			step_resp = await asyncio.to_thread(
-				requests.post,
+				_session.post,
 				"https://api.mail.tm/accounts",
 				json={"address": address, "password": password},
 				headers={"accept": "application/ld+json"},
@@ -494,9 +540,6 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 			account = pymailtm.Account(
 				response_data["id"], response_data["address"], password
 			)
-			# Prime the cache so mail_login can reuse this account immediately.
-			_last_mail_account = account
-			_last_mail_password = password
 			break
 		except CouldNotGetAccountException as e:
 			last_error = str(e)
@@ -521,6 +564,8 @@ async def generate_mail(provider_name: str = "mailtm") -> Credentials:
 	credentials.emailPassword = account.password
 	credentials.password = get_random_string(14)
 	credentials.id = account.id_
+	# Prime the per-identity cache so mail_login reuses this exact session.
+	_cache_mail_account(credentials, account)
 
 	_step(f"[mail] generated address: {credentials.email}", Colours.OKBLUE)
 	_log(f"[mail] mailbox password: {credentials.emailPassword}")

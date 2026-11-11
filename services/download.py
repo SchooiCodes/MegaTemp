@@ -42,12 +42,26 @@ def list_files(credentials: Credentials) -> list[dict]:
 def download_file(
 	credentials: Credentials, node: dict, dest_dir: str = "."
 ) -> str | None:
-	"""Download a file from MEGA by its node dict. Returns local path or None."""
+	"""Download a file from MEGA by its node dict. Returns local path or None.
+
+	Data is written to ``<name>.part`` and only renamed after the transfer
+	finishes. If the timeout fires the worker keeps writing to the ``.part``
+	file, so a truncated file can never masquerade as a complete download.
+	"""
 	from services.upload import _safe_mega_session
 
 	mega = _safe_mega_session(credentials)
 	if mega is None:
 		return None
+
+	info = node[1] if isinstance(node, tuple) and len(node) > 1 else {}
+	name = ""
+	if isinstance(info, dict):
+		name = (info.get("a") or {}).get("n") or ""
+	name = os.path.basename(name) or f"mega-download-{node[0] if node else 'file'}"
+	part_name = f"{name}.part"
+	part_path = os.path.join(dest_dir, part_name)
+	final_path = os.path.join(dest_dir, name)
 
 	try:
 		p_print(f"Downloading to {dest_dir} ...", Colours.HEADER)
@@ -59,7 +73,7 @@ def download_file(
 		def _run():
 			try:
 				result[0] = retry(label="mega.download", max_attempts=3)(mega.download)(
-					node, dest_path=dest_dir
+					node, dest_path=dest_dir, dest_filename=part_name
 				)
 			except Exception as e:
 				exception[0] = e
@@ -68,13 +82,18 @@ def download_file(
 		t.start()
 		t.join(timeout=300)
 		if t.is_alive():
-			p_print("Download timed out (5 min limit).", Colours.FAIL)
+			p_print(
+				f"Download timed out (5 min limit); partial data left in {part_path}.",
+				Colours.FAIL,
+			)
 			return None
 		if exception[0]:
 			raise exception[0]
-		local_path = result[0]
-		p_print(f"Downloaded to {local_path}", Colours.OKGREEN)
-		return local_path
+		if result[0] is None or not os.path.exists(part_path):
+			raise OSError("download finished without a file")
+		os.replace(part_path, final_path)
+		p_print(f"Downloaded to {final_path}", Colours.OKGREEN)
+		return final_path
 	except Exception as e:
 		p_print(f"Download failed: {e}", Colours.FAIL)
 		return None

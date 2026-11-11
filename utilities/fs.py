@@ -1,10 +1,11 @@
 """All functions related to working with the config file."""
 
-from dataclasses import asdict
+from dataclasses import asdict, fields
 import os
 import json
 import re
 import sys
+import tempfile
 
 from utilities.etc import p_print
 from utilities.models import Colours, Credentials, Config, migrate_config
@@ -92,20 +93,33 @@ def read_config() -> Config | None:
 	# Migrate from older schema versions.
 	json_data = migrate_config(json_data)
 
+	# Tolerate unknown keys (config written by a newer version, or a typo)
+	# instead of crashing the whole app with a TypeError from Config(**data).
+	known = {f.name for f in fields(Config)}
+	unknown = sorted(set(json_data) - known)
+	if unknown:
+		p_print(
+			f"Config: ignoring unknown key(s): {', '.join(unknown)}",
+			Colours.WARNING,
+		)
+		json_data = {k: v for k, v in json_data.items() if k in known}
+
 	# Validate config values
 	_validate_config(json_data)
 
 	# Reconcile any missing keys from a newer version of the config schema.
+	# This is a read-only operation: writing here made every read a mutation
+	# and broke read-only installs.
 	defaults = asdict(Config())
 	missing = {k: v for k, v in defaults.items() if k not in json_data}
 	if missing:
 		json_data.update(missing)
-		merged = Config(**json_data)
-		write_config("executablePath", merged.executablePath, merged)
-	else:
-		merged = Config(**json_data)
 
-	return merged
+	try:
+		return Config(**json_data)
+	except TypeError as e:
+		p_print(f"Config: invalid value type ({e}); using defaults.", Colours.WARNING)
+		return Config()
 
 
 def concrete_read_config() -> Config:
@@ -146,6 +160,24 @@ def write_default_config() -> Config | None:
 		return Config()
 
 
+def _safe_filename(email: str) -> str:
+	"""Build a filesystem-safe credential filename stem from an email address."""
+	local_part = (email or "").split("@", 1)[0] or "account"
+	return "".join(c if c.isalnum() or c in "-_." else "_" for c in local_part)
+
+
+def _plaintext_warning(path: str) -> None:
+	"""Warn when an export bypasses at-rest credential encryption."""
+	if not _get_encryption_password():
+		return
+	p_print(
+		f"WARNING: {path} is written in PLAINTEXT even though an encryption "
+		"password is configured. Delete it after use or use the encrypted "
+		"per-account JSON store.",
+		Colours.WARNING,
+	)
+
+
 def save_credentials(
 	credentials: Credentials, account_format: str, encryption_password: str = ""
 ) -> None:
@@ -156,7 +188,7 @@ def save_credentials(
 	is written. Filenames are derived from the local part of the email
 	(`user@domain` -> `user`) so they stay valid regardless of the TLD length.
 	"""
-	os.makedirs("credentials", exist_ok=True)
+	os.makedirs(CREDENTIALS_DIR, exist_ok=True)
 
 	if account_format != "":
 		line = (
@@ -165,25 +197,26 @@ def save_credentials(
 			.replace("{emailPassword}", credentials.emailPassword)
 			+ "\n"
 		)
+		path = os.path.join(CREDENTIALS_DIR, "accounts.txt")
+		_plaintext_warning(path)
 		try:
-			with open("credentials/accounts.txt", "a", encoding="utf-8") as file:
+			with open(path, "a", encoding="utf-8", newline="") as file:
 				file.write(line)
 		except OSError as e:
-			p_print(f"Failed to write accounts.txt: {e}", Colours.FAIL)
+			p_print(f"Failed to write {path}: {e}", Colours.FAIL)
 		return
 
-	# Build a safe filename from the local part of the email address.
-	local_part = credentials.email.split("@", 1)[0] if credentials.email else "account"
-	safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in local_part)
+	safe_name = _safe_filename(credentials.email)
 
 	data = asdict(credentials)
 	if encryption_password:
 		encrypt_credential(data, encryption_password)
 
+	path = os.path.join(CREDENTIALS_DIR, f"{safe_name}.json")
 	try:
-		with open(f"credentials/{safe_name}.json", "w", encoding="utf-8") as file:
+		with open(path, "w", encoding="utf-8", newline="\n") as file:
 			file.write(json.dumps(data, indent=2))
-		_credentials_cache.pop(f"credentials/{safe_name}.json", None)
+		_credentials_cache.pop(path, None)
 	except OSError as e:
 		p_print(f"Failed to write credentials file: {e}", Colours.FAIL)
 
@@ -192,9 +225,10 @@ def save_credentials_csv(credentials: Credentials) -> None:
 	"""Append the credentials to credentials/accounts.csv (email,password,emailPassword)."""
 	import csv
 
-	os.makedirs("credentials", exist_ok=True)
-	csv_path = "credentials/accounts.csv"
+	os.makedirs(CREDENTIALS_DIR, exist_ok=True)
+	csv_path = os.path.join(CREDENTIALS_DIR, "accounts.csv")
 	write_header = not os.path.exists(csv_path) or os.stat(csv_path).st_size == 0
+	_plaintext_warning(csv_path)
 	try:
 		with open(csv_path, "a", encoding="utf-8", newline="") as file:
 			writer = csv.writer(file)
@@ -222,19 +256,19 @@ def merge_config(overrides: dict, config: Config | None = None) -> Config:
 
 	for k, v in overrides.items():
 		config[k] = v
-	with open(_config_path(), "w", encoding="utf-8") as f:
+	with open(_config_path(), "w", encoding="utf-8", newline="\n") as f:
 		f.write(json.dumps(asdict(config), indent=4, sort_keys=True))
 	return config
 
 
 def save_credentials_jsonl(credentials: Credentials) -> None:
 	"""Append credentials as a JSON Line to credentials/accounts.jsonl."""
-	os.makedirs("credentials", exist_ok=True)
-	from dataclasses import asdict
+	os.makedirs(CREDENTIALS_DIR, exist_ok=True)
 
-	path = "credentials/accounts.jsonl"
+	path = os.path.join(CREDENTIALS_DIR, "accounts.jsonl")
+	_plaintext_warning(path)
 	try:
-		with open(path, "a", encoding="utf-8") as f:
+		with open(path, "a", encoding="utf-8", newline="\n") as f:
 			f.write(json.dumps(asdict(credentials)) + "\n")
 	except OSError as e:
 		p_print(f"Failed to write {path}: {e}", Colours.FAIL)
@@ -281,7 +315,7 @@ def encrypt_credential(data: dict, password: str) -> dict:
 				a ^ b
 				for a, b in zip(
 					val.encode().ljust(64, b"\0")[:64],
-					key * (64 // len(key) + 1),
+					(key * (64 // len(key) + 1))[:64],
 					strict=True,
 				)
 			)
@@ -315,7 +349,11 @@ def decrypt_credential(data: dict, password: str) -> dict:
 			enc = base64.b64decode(val[4:])
 			dec = bytes(
 				a ^ b
-				for a, b in zip(enc, key * (len(enc) // len(key) + 1), strict=True)
+				for a, b in zip(
+					enc,
+					(key * (len(enc) // len(key) + 1))[: len(enc)],
+					strict=True,
+				)
 			)
 			data[f] = dec.rstrip(b"\0").decode(errors="replace")
 	return data
@@ -337,6 +375,44 @@ def _get_encryption_password() -> str:
 	except Exception:
 		pass
 	return ""
+
+
+def reset_encryption_password_cache() -> None:
+	"""Forget the cached encryption password (tests/config reloads)."""
+	global _encryption_password_cache
+	_encryption_password_cache = ""
+
+
+def load_credential_file(path: str, password: str | None = None) -> tuple[dict, bool]:
+	"""Return ``(decrypted data, was_encrypted)`` for a credential JSON file.
+
+	Centralises the ENC:/OBS: detection so every reader (exports, extract,
+	keepalive, viewer) sees plaintext credentials instead of literal
+	``ENC:gAAAA...`` strings.
+	"""
+	with open(path, "r", encoding="utf-8") as fh:
+		data = json.load(fh)
+	encrypted = any(
+		isinstance(v, str) and v.startswith(("ENC:", "OBS:")) for v in data.values()
+	)
+	if encrypted:
+		key = _get_encryption_password() if password is None else password
+		if key:
+			decrypt_credential(data, key)
+	return data, encrypted
+
+
+def _data_to_credentials(data: dict) -> Credentials:
+	"""Build a Credentials object from a raw/decrypted credential dict."""
+	return Credentials(
+		email=data.get("email", ""),
+		emailPassword=data.get("emailPassword", ""),
+		password=data.get("password", ""),
+		id=data.get("id", ""),
+		notes=data.get("notes", ""),
+		tags=data.get("tags", ""),
+		lastLogin=float(data.get("lastLogin", 0.0) or 0.0),
+	)
 
 
 def _parse_account_format(account_format: str, line: str) -> Credentials | None:
@@ -421,13 +497,15 @@ def list_credentials() -> list[tuple[str, Credentials, float]]:
 	import glob
 
 	result: list[tuple[str, Credentials, float]] = []
-	if not os.path.isdir("credentials"):
+	if not os.path.isdir(CREDENTIALS_DIR):
 		return result
 
-	enc_pw = _get_encryption_password() if _get_encryption_password() else ""
+	enc_pw = _get_encryption_password()
 
 	for path in sorted(
-		glob.glob("credentials/*.json"), key=os.path.getmtime, reverse=True
+		glob.glob(os.path.join(CREDENTIALS_DIR, "*.json")),
+		key=os.path.getmtime,
+		reverse=True,
 	):
 		try:
 			mtime = os.path.getmtime(path)
@@ -438,22 +516,10 @@ def list_credentials() -> list[tuple[str, Credentials, float]]:
 			result.append((os.path.basename(path), cached[1], mtime))
 			continue
 		try:
-			with open(path, "r", encoding="utf-8") as fh:
-				data = json.load(fh)
+			data = load_credential_file(path, password=enc_pw)[0]
 		except (json.JSONDecodeError, OSError):
 			continue
-		if enc_pw and any(
-			v.startswith(("ENC:", "OBS:")) for v in data.values() if isinstance(v, str)
-		):
-			decrypt_credential(data, enc_pw)
-		creds = Credentials(
-			email=data.get("email", ""),
-			emailPassword=data.get("emailPassword", ""),
-			password=data.get("password", ""),
-			id=data.get("id", ""),
-			notes=data.get("notes", ""),
-			tags=data.get("tags", ""),
-		)
+		creds = _data_to_credentials(data)
 		_credentials_cache[path] = (mtime, creds)
 		result.append((os.path.basename(path), creds, mtime))
 
@@ -468,3 +534,145 @@ def list_credentials() -> list[tuple[str, Credentials, float]]:
 		result.append((name, creds, mtime))
 		_known.add(creds.email)
 	return result
+
+
+def find_credential_path(email: str) -> str | None:
+	"""Locate the credential store for *email*.
+
+	Handles sanitised JSON filenames (``+``/unicode → ``_``), accounts.txt
+	entries and config profiles (the directory constant is shared). Returns
+	``None`` when no matching credential exists.
+	"""
+	email = (email or "").strip()
+	if not email:
+		return None
+	if os.path.isfile(email):
+		return email
+
+	for basename, creds, _mtime in list_credentials():
+		if (
+			creds.email.lower() == email.lower()
+			or os.path.splitext(basename)[0] == email
+		):
+			path = os.path.join(CREDENTIALS_DIR, basename)
+			if os.path.isfile(path) and not basename.endswith(".txt"):
+				return path
+			return os.path.join(CREDENTIALS_DIR, "accounts.txt")
+
+	# Fallback for files that failed to parse (e.g. unknown encryption password).
+	candidate = os.path.join(CREDENTIALS_DIR, f"{_safe_filename(email)}.json")
+	if os.path.isfile(candidate):
+		return candidate
+	return None
+
+
+def _write_json_atomic(path: str, data: dict) -> None:
+	"""Write JSON to *path* atomically (temp file + replace)."""
+	directory = os.path.dirname(path) or "."
+	fd, tmp = tempfile.mkstemp(dir=directory, prefix=".cred-", suffix=".json")
+	try:
+		with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+			json.dump(data, fh, indent=2)
+		os.replace(tmp, path)
+	finally:
+		if os.path.exists(tmp):
+			try:
+				os.remove(tmp)
+			except OSError:
+				pass
+
+
+def update_credential(email: str, **fields_to_set) -> bool:
+	"""Update fields in the stored credential for *email*.
+
+	Decrypts with the configured password, mutates, then re-encrypts. Returns
+	False (without touching the file) when an encrypted file cannot be
+	decrypted, so a password change can never mangle the store.
+	"""
+	path = find_credential_path(email)
+	if path is None:
+		return False
+	allowed = {f.name for f in fields(Credentials)}
+	updates = {k: v for k, v in fields_to_set.items() if k in allowed}
+	if not updates:
+		return False
+
+	if os.path.basename(path) == "accounts.txt":
+		cfg = read_config()
+		fmt = (cfg.accountFormat if cfg else "") or "{email}#{password}"
+		path = os.path.join(CREDENTIALS_DIR, "accounts.txt")
+		try:
+			with open(path, "r", encoding="utf-8") as fh:
+				lines = fh.readlines()
+		except OSError:
+			return False
+		changed = False
+		for idx, line in enumerate(lines):
+			creds = _parse_account_format(fmt, line)
+			if creds is None or creds.email.lower() != email.lower():
+				continue
+			for key, value in updates.items():
+				setattr(creds, key, value)
+			lines[idx] = (
+				fmt.replace("{email}", creds.email)
+				.replace("{password}", creds.password)
+				.replace("{emailPassword}", creds.emailPassword)
+				+ "\n"
+			)
+			changed = True
+		if not changed:
+			return False
+		try:
+			with open(path, "w", encoding="utf-8", newline="\n") as fh:
+				fh.writelines(lines)
+		except OSError:
+			return False
+		_invalidate_credentials_cache()
+		return True
+
+	try:
+		data, was_encrypted = load_credential_file(path)
+	except (OSError, json.JSONDecodeError):
+		return False
+	configured = _get_encryption_password()
+	if was_encrypted and not configured:
+		p_print(
+			f"Cannot update {path}: file is encrypted but no encryption password "
+			"is configured.",
+			Colours.FAIL,
+		)
+		return False
+
+	data.update(updates)
+	if was_encrypted or configured:
+		encrypt_credential(data, configured)
+	try:
+		_write_json_atomic(path, data)
+	except OSError as e:
+		p_print(f"Failed to update credentials file: {e}", Colours.FAIL)
+		return False
+	_credentials_cache.pop(path, None)
+	return True
+
+
+def delete_credential(email: str) -> bool:
+	"""Delete the stored credential for *email* (JSON file and/or txt line)."""
+	path = find_credential_path(email)
+	if path is None:
+		return False
+
+	removed = False
+	cfg = read_config()
+	fmt = (cfg.accountFormat if cfg else "") or ""
+	if os.path.basename(path) == "accounts.txt":
+		removed = remove_accounts_txt_line(email, fmt)
+	else:
+		try:
+			os.remove(path)
+			removed = True
+		except OSError:
+			removed = False
+		# A matching flat-file line may also exist.
+		remove_accounts_txt_line(email, fmt)
+	_credentials_cache.pop(path, None)
+	return removed

@@ -6,11 +6,12 @@ from utilities.etc import p_print, Colours
 from utilities.fs import (
 	CREDENTIALS_DIR as CREDENTIALS_FOLDER,
 	CREDENTIALS_TXT as OUTPUT_FILE,
+	load_credential_file,
 )
 
 
 def _load_all() -> list[dict]:
-	"""Load all credential JSON files from the credentials folder."""
+	"""Load and decrypt all credential JSON files from the credentials folder."""
 	if not os.path.isdir(CREDENTIALS_FOLDER):
 		return []
 	results = []
@@ -19,8 +20,8 @@ def _load_all() -> list[dict]:
 			continue
 		path = os.path.join(CREDENTIALS_FOLDER, f)
 		try:
-			with open(path, "r") as fh:
-				results.append(json.load(fh))
+			data, _encrypted = load_credential_file(path)
+			results.append(data)
 		except (json.JSONDecodeError, OSError):
 			continue
 	return results
@@ -28,7 +29,7 @@ def _load_all() -> list[dict]:
 
 _EXPORT_FORMATS = {
 	"bitwarden": {
-		"file": "credentials/bitwarden_export.csv",
+		"file": "bitwarden_export.csv",
 		"header": [
 			"folder",
 			"favorite",
@@ -53,7 +54,7 @@ _EXPORT_FORMATS = {
 		],
 	},
 	"1password": {
-		"file": "credentials/1password_export.csv",
+		"file": "1password_export.csv",
 		"header": ["title", "url", "username", "password", "notes"],
 		"row": lambda a: [
 			f"MEGA - {a.get('email', '')}",
@@ -64,7 +65,7 @@ _EXPORT_FORMATS = {
 		],
 	},
 	"keepass": {
-		"file": "credentials/keepass_export.csv",
+		"file": "keepass_export.csv",
 		"header": ["Group", "Title", "Username", "Password", "URL", "Notes"],
 		"row": lambda a: [
 			"MEGA",
@@ -83,15 +84,16 @@ def _export_csv(fmt: str) -> str:
 	if not cfg:
 		raise ValueError(f"unknown export format: {fmt}")
 	accounts = _load_all()
-	os.makedirs("credentials", exist_ok=True)
-	with open(cfg["file"], "w", newline="") as f:
+	os.makedirs(CREDENTIALS_FOLDER, exist_ok=True)
+	output_path = os.path.join(CREDENTIALS_FOLDER, cfg["file"])
+	with open(output_path, "w", encoding="utf-8", newline="") as f:
 		w = csv.writer(f)
 		w.writerow(cfg["header"])
 		for a in accounts:
 			w.writerow(cfg["row"](a))
 			p_print(f"  + {a.get('email', '?')}", Colours.OKCYAN)
-	p_print(f"{fmt.capitalize()} CSV saved to {cfg['file']}", Colours.OKGREEN)
-	return cfg["file"]
+	p_print(f"{fmt.capitalize()} CSV saved to {output_path}", Colours.OKGREEN)
+	return output_path
 
 
 def export_bitwarden_csv() -> str:
@@ -124,23 +126,31 @@ def extract_credentials(account_format: str = "{email}#{password}") -> None:
 	]
 	p_print(f"Extracting {len(json_files)} account(s)...", Colours.OKCYAN)
 
-	with open(OUTPUT_FILE, "w") as output_file:
+	with open(OUTPUT_FILE, "w", encoding="utf-8", newline="\n") as output_file:
 		for file in json_files:
 			file_path = os.path.join(CREDENTIALS_FOLDER, file)
 
-			with open(file_path, "r") as json_file:
-				try:
-					data = json.load(json_file)
-				except json.JSONDecodeError:
-					p_print(
-						f"Failed to parse JSON file: {file}, skipping...",
-						Colours.WARNING,
-					)
-					continue
+			try:
+				data, was_encrypted = load_credential_file(file_path)
+			except (json.JSONDecodeError, OSError):
+				p_print(
+					f"Failed to parse JSON file: {file}, skipping...",
+					Colours.WARNING,
+				)
+				continue
 
-			email = data.get("email", "")
 			password = data.get("password", "")
 			emailPassword = data.get("emailPassword", "")
+			if was_encrypted and any(
+				str(v).startswith(("ENC:", "OBS:")) for v in (password, emailPassword)
+			):
+				p_print(
+					f"Cannot decrypt {file} (no/wrong encryption password), skipping...",
+					Colours.WARNING,
+				)
+				continue
+
+			email = data.get("email", "")
 
 			# Replace placeholders in the account_format string with actual values
 			output = (

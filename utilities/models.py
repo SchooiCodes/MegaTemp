@@ -42,7 +42,7 @@ class Config:
 	jsonlExport: bool = False
 	visibleBrowser: bool = False
 	emailProvider: str = "mailtm"
-	mailTimeout: int = 45
+	mailTimeout: int = 120
 	quiet: bool = False
 	webhookUrl: str = ""
 	encryptionPassword: str = ""
@@ -73,7 +73,7 @@ _CONFIG_MIGRATIONS: dict[int, callable] = {
 		{
 			"schemaVersion": 2,
 			"jsonlExport": False,
-			"mailTimeout": 45,
+			"mailTimeout": 120,
 			"quiet": False,
 		}
 	),

@@ -52,21 +52,21 @@ def delete_account(credentials: Credentials) -> bool:
 
 
 def change_password(credentials: Credentials, new_password: str) -> bool:
-	"""Change the MEGA account password."""
-	from services.upload import _safe_mega_session
+	"""Change the MEGA account password.
 
-	mega = _safe_mega_session(credentials)
-	if mega is None:
-		return False
-
-	p_print(f"Changing password for {credentials.email}...", Colours.WARNING)
-	try:
-		mega._api_request([{"a": "up", "pass": new_password}])
-		p_print("Password changed successfully.", Colours.OKGREEN)
-		return True
-	except Exception as e:
-		p_print(f"Password change failed: {e}", Colours.FAIL)
-		return False
+	MEGA does not expose a "set plaintext password" API command: the login
+	hash is derived from a per-user salt (PBKDF2) and the SDK/mega.py have no
+	verified password-change handshake. The previous ``{"a": "up", "pass":
+	...}`` request was at best a no-op reporting success. Refuse explicitly
+	instead of risking a silent failure.
+	"""
+	p_print(
+		"Changing the MEGA password from MegaTemp is not supported: MEGA "
+		"requires a salted key handshake that mega.py does not implement. "
+		"Change it at https://mega.nz/ (Settings → Security) instead.",
+		Colours.WARNING,
+	)
+	return False
 
 
 def create_folder(credentials: Credentials, folder_name: str) -> bool:

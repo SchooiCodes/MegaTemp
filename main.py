@@ -1,36 +1,20 @@
 """Main file for the project, handles the arguments and calls the other files."""
 
-import asyncio
 import argparse
+import asyncio
 import os
 import random
 import sys
 import time
 import subprocess
 from typing import Tuple
-import pyppeteer
-import pyppeteer.errors
 
-# When available, import pyperclip for clipboard copy.
-try:
-	import pyperclip as _pyperclip
+# Must be imported before anything prints: makes redirected/piped output total
+# on Windows' legacy code pages and configures colour/glyph support.
+from utilities import console
 
-	_HAS_CLIPBOARD = True
-except ImportError:
-	_HAS_CLIPBOARD = False
+console.init()
 
-# tenacity (a transitive dependency of mega.py) uses @asyncio.coroutine
-# in its _asyncio module, which was removed in Python 3.11. If we're
-import utilities.compat  # noqa: F401 — restores asyncio.coroutine for tenacity
-
-from utilities.mega_patch import patch_mega
-
-patch_mega()  # noqa: E402 — must run before service imports
-
-from services.alive import keepalive  # noqa: E402
-from services.upload import upload_file, get_mega_session, _upload_with_session  # noqa: E402
-from services.extract import extract_credentials  # noqa: E402
-from services.download import _action_browse_cloud  # noqa: E402
 from utilities.fs import (  # noqa: E402
 	Config,
 	concrete_read_config,
@@ -42,17 +26,6 @@ from utilities.fs import (  # noqa: E402
 	save_credentials_csv,
 	save_credentials_jsonl,
 )
-from utilities.web import (  # noqa: E402
-	finish_form,
-	generate_mail,
-	type_name,
-	type_password,
-	initial_setup,
-	mail_login,
-	get_mail,
-	set_verbose,
-)
-from pymailtm.pymailtm import CouldNotGetAccountException, CouldNotGetMessagesException  # noqa: E402
 from utilities.etc import (  # noqa: E402
 	Credentials,
 	p_print,
@@ -70,6 +43,8 @@ from utilities.etc import (  # noqa: E402
 	VERSION,
 	notify,
 	set_quiet,
+	set_json_mode,
+	set_notify_enabled,
 	send_webhook,
 	capture_worker_output,
 )
@@ -83,6 +58,121 @@ from utilities.menu import (  # noqa: E402
 	prompt_path,
 	pause,
 )
+
+# When available, import pyperclip for clipboard copy.
+try:
+	import pyperclip as _pyperclip
+
+	_HAS_CLIPBOARD = True
+except ImportError:
+	_HAS_CLIPBOARD = False
+
+# --------------------------------------------------------------------------- #
+# Lazy heavy dependencies
+# --------------------------------------------------------------------------- #
+# pyppeteer, mega.py, requests/pymailtm/faker and the service modules cost
+# ~2.5 s to import. They are only needed by the browser/MEGA paths, so
+# browser-free commands (--version, --health, --extract, exports,
+# --list-cloud, --keepalive) load just what they use. This keeps those
+# commands usable on machines without Chromium and in CI/cron.
+pyppeteer = None
+keepalive = None
+upload_file = None
+get_mega_session = None
+_upload_with_session = None
+extract_credentials = None
+_action_browse_cloud = None
+finish_form = None
+generate_mail = None
+type_name = None
+type_password = None
+initial_setup = None
+mail_login = None
+get_mail = None
+set_verbose = None
+CouldNotGetAccountException = None
+CouldNotGetMessagesException = None
+
+_mega_loaded = False
+_web_loaded = False
+
+
+def _load_mega() -> None:
+	"""Import MEGA-related modules and apply the mega.py patches (once)."""
+	global _mega_loaded, keepalive, upload_file, get_mega_session
+	global _upload_with_session, extract_credentials, _action_browse_cloud
+
+	if _mega_loaded:
+		return
+
+	# tenacity (a transitive dependency of mega.py) uses @asyncio.coroutine,
+	# removed in Python 3.11; the shim restores it before mega/tenacity loads.
+	import utilities.compat  # noqa: F401
+
+	from utilities.mega_patch import patch_mega
+
+	patch_mega()  # must run before any MEGA session is created
+
+	from services.alive import keepalive as _keepalive
+	from services.upload import (
+		upload_file as _upload_file,
+		get_mega_session as _get_mega_session,
+		_upload_with_session as __upload_with_session,
+	)
+	from services.extract import extract_credentials as _extract_credentials
+	from services.download import _action_browse_cloud as __action_browse_cloud
+
+	keepalive = _keepalive
+	upload_file = _upload_file
+	get_mega_session = _get_mega_session
+	_upload_with_session = __upload_with_session
+	extract_credentials = _extract_credentials
+	_action_browse_cloud = __action_browse_cloud
+	_mega_loaded = True
+
+
+def _load_web() -> None:
+	"""Import the browser/registration stack (pyppeteer, web, pymailtm)."""
+	global _web_loaded, pyppeteer
+	global finish_form, generate_mail, type_name, type_password, initial_setup
+	global mail_login, get_mail, set_verbose
+	global CouldNotGetAccountException, CouldNotGetMessagesException
+
+	_load_mega()
+	if _web_loaded:
+		return
+
+	import pyppeteer as _pyppeteer
+	import pyppeteer.errors  # noqa: F401 - registers pyppeteer.errors.*
+
+	from utilities.web import (
+		finish_form as _finish_form,
+		generate_mail as _generate_mail,
+		type_name as _type_name,
+		type_password as _type_password,
+		initial_setup as _initial_setup,
+		mail_login as _mail_login,
+		get_mail as _get_mail,
+		set_verbose as _set_verbose,
+	)
+	from pymailtm.pymailtm import (
+		CouldNotGetAccountException as _CouldNotGetAccountException,
+		CouldNotGetMessagesException as _CouldNotGetMessagesException,
+	)
+
+	pyppeteer = _pyppeteer
+	finish_form = _finish_form
+	generate_mail = _generate_mail
+	type_name = _type_name
+	type_password = _type_password
+	initial_setup = _initial_setup
+	mail_login = _mail_login
+	get_mail = _get_mail
+	set_verbose = _set_verbose
+	CouldNotGetAccountException = _CouldNotGetAccountException
+	CouldNotGetMessagesException = _CouldNotGetMessagesException
+	_web_loaded = True
+
 
 # Cached working directory (syscall cache — avoid repeated os.getcwd() calls).
 _CWD = os.getcwd()
@@ -205,7 +295,7 @@ def _build_browser_args(proxy_override: str | None = None) -> list[str]:
 	base = list(_BROWSER_BASE_ARGS)
 	if proxy_override:
 		base.append(f"--proxy-server={proxy_override}")
-	else:
+	elif _proxy_manager is not None:
 		proxy = _proxy_manager.get_proxy()
 		if proxy:
 			base.append(f"--proxy-server={proxy}")
@@ -301,8 +391,9 @@ reg.add_argument(
 	"--mail-timeout",
 	required=False,
 	type=int,
-	default=120,
-	help="Seconds to wait for MEGA confirmation email (default: 120).",
+	default=None,
+	metavar="SECONDS",
+	help="Seconds to wait for MEGA confirmation email (default: config mailTimeout, 120).",
 )
 
 up = parser.add_argument_group("Upload")
@@ -422,6 +513,13 @@ ka.add_argument(
 	default=0,
 	help="When used with --keepalive, loop continuously every N hours.",
 )
+ka.add_argument(
+	"-y",
+	"--yes",
+	required=False,
+	action="store_true",
+	help="Skip the interactive confirmation for --prune (required in scripts).",
+)
 
 info = parser.add_argument_group("Info & Utility")
 info.add_argument(
@@ -480,25 +578,66 @@ info.add_argument(
 	default="",
 	help="URL to POST JSON payload on registration success/failure.",
 )
+info.add_argument(
+	"--notify",
+	required=False,
+	action="store_true",
+	help="Show a desktop notification when a batch finishes (opt-in).",
+)
+info.add_argument(
+	"--workers",
+	required=False,
+	type=int,
+	default=0,
+	metavar="N",
+	help="Max parallel MEGA logins for --health/--keepalive (default: 4).",
+)
+info.add_argument(
+	"--browser",
+	required=False,
+	default="",
+	metavar="PATH",
+	help="Path to a Chromium-based browser (overrides config/auto-detect).",
+)
+info.add_argument(
+	"--update",
+	required=False,
+	action="store_true",
+	help="Check for a newer release and update (frozen builds only).",
+)
 
-console_args = parser.parse_args()
+console_args = None  # populated by main() so importing main has no side effects
 
-# Validate --provider value early.
-if console_args.provider is not None:
+
+def _build_config(create: bool = False) -> Config:
+	"""Read the config, optionally creating it with defaults.
+
+	Browser-free commands pass ``create=False`` so a read-only invocation
+	never writes ``config.json``.
+	"""
+	config = read_config()
+	if config is None and create:
+		config = write_default_config()
+		if config is None:
+			config = concrete_read_config()
+	return config or Config()
+
+
+def _validate_provider() -> bool:
+	"""Validate --provider early; return False (and report) when unknown."""
+	if console_args.provider is None:
+		return True
+
 	from utilities.provider import get_provider, get_provider_names
 
-	if get_provider(console_args.provider) is None:
-		p_print(
-			f"Unknown provider: '{console_args.provider}'. "
-			f"Valid options: {get_provider_names() or 'none'}",
-			Colours.FAIL,
-		)
-		sys.exit(1)
-
-# --json only makes sense with --health.
-if console_args.json and not console_args.health:
-	p_print("--json requires --health (e.g. --health --json).", Colours.WARNING)
-	sys.exit(1)
+	if get_provider(console_args.provider) is not None:
+		return True
+	p_print(
+		f"Unknown provider: '{console_args.provider}'. "
+		f"Valid options: {get_provider_names() or 'none'}",
+		Colours.FAIL,
+	)
+	return False
 
 
 def setup() -> Tuple[str, Config]:
@@ -522,6 +661,15 @@ def setup() -> Tuple[str, Config]:
 	else:
 		executable_path = config.executablePath
 
+	# Explicit --browser wins over config and auto-detection.
+	if console_args.browser:
+		if os.path.exists(console_args.browser):
+			executable_path = console_args.browser
+			write_config("executablePath", executable_path, config)
+		else:
+			p_print(f"Browser not found: {console_args.browser}", Colours.FAIL)
+			raise SystemExit(1)
+
 	# Auto-detect a Chromium-based browser from known paths.
 	if not executable_path:
 		for candidate in default_installs:
@@ -531,12 +679,20 @@ def setup() -> Tuple[str, Config]:
 				write_config("executablePath", executable_path, config)
 				break
 
-	# If still not found, ask the user for the path.
+	# If still not found, ask the user for the path — but never block a
+	# non-interactive run (Docker/CI/cron) on a browser prompt.
 	if not executable_path:
 		p_print(
 			"Failed to find a Chromium based browser. Please make sure you have one installed.",
 			Colours.FAIL,
 		)
+		if not (sys.stdin and sys.stdin.isatty()):
+			p_print(
+				"No TTY available to ask for the path. Install Chromium, or set "
+				'{"executablePath": "..."} in config.json, or pass --browser.',
+				Colours.WARNING,
+			)
+			raise SystemExit(2)
 		executable_path = input(
 			"Please enter the path to a Chromium based browser's executable: "
 		)
@@ -545,7 +701,7 @@ def setup() -> Tuple[str, Config]:
 			write_config("executablePath", executable_path, config)
 		else:
 			p_print("Failed to find executable!", Colours.FAIL)
-			sys.exit(1)
+			raise SystemExit(1)
 
 	return executable_path, config
 
@@ -569,6 +725,7 @@ def loop_registrations(
 	provider_name: str | None = None,
 	webhook_url: str = "",
 	encryption_password: str = "",
+	mail_timeout: float | None = None,
 ) -> None:
 	"""Registers accounts in a loop, printing a summary at the end.
 
@@ -630,6 +787,7 @@ def loop_registrations(
 						provider_name=provider_name,
 						webhook_url=webhook_url,
 						encryption_password=encryption_password,
+						mail_timeout=mail_timeout,
 						_browser=browser,
 					)
 					successes += 1
@@ -693,6 +851,7 @@ def parallel_registrations(
 	provider_name: str | None = None,
 	webhook_url: str = "",
 	encryption_password: str = "",
+	mail_timeout: float | None = None,
 ) -> None:
 	"""Register accounts concurrently using N parallel workers.
 
@@ -756,6 +915,7 @@ def parallel_registrations(
 							provider_name=provider_name,
 							webhook_url=webhook_url,
 							encryption_password=encryption_password,
+							mail_timeout=mail_timeout,
 							_browser=browser,
 						)
 						# already counted as success above
@@ -842,6 +1002,7 @@ async def register(
 	provider_name: str | None = None,
 	webhook_url: str = "",
 	encryption_password: str = "",
+	mail_timeout: float | None = None,
 	_browser: object | None = None,  # internal: reuse across loop iterations
 ) -> Credentials | None:
 	"""Registers and verifies a mega.nz account.
@@ -854,9 +1015,11 @@ async def register(
 	When called from loop mode, pass a shared ``_browser`` so Chromium is
 	launched once instead of per-iteration.
 	"""
+	_load_web()
 	_install_async_handler()
 	message = None
 	start = time.monotonic()
+	mail_wait = config.mailTimeout if mail_timeout is None else mail_timeout
 	primary_provider = (
 		provider_name or getattr(config, "emailProvider", "mailtm") or "mailtm"
 	)
@@ -901,6 +1064,40 @@ async def register(
 
 		try:
 			for attempt in range(1, max_attempts + 1):
+				# Per-attempt proxy rotation: relaunch the browser with the next
+				# proxy so every attempt really uses a different IP.
+				if (
+					attempt > 1
+					and own_browser
+					and _proxy_manager is not None
+					and _proxy_manager.active
+					and _proxy_manager.per_attempt
+				):
+					try:
+						await context.close()
+					except Exception:
+						pass
+					try:
+						await browser.close()
+					except Exception:
+						pass
+					_cleanup_pyppeteer(browser)
+					browser = await _launch_browser(
+						{
+							"headless": not visible,
+							"ignoreHTTPSErrors": True,
+							"userDataDir": f"{_CWD}/tmp",
+							"args": _build_browser_args(),
+							"executablePath": executable_path,
+							"autoClose": False,
+							"ignoreDefaultArgs": [
+								"--enable-automation",
+								"--disable-extensions",
+							],
+						}
+					)
+					context = await browser.createIncognitoBrowserContext()
+
 				separator(f"Registration attempt {attempt}/{max_attempts} ({prov})")
 				page = None
 				try:
@@ -915,7 +1112,7 @@ async def register(
 
 					mail = await mail_login(credentials, prov)
 					try:
-						message = await get_mail(mail, max_attempts=config.mailTimeout)
+						message = await get_mail(mail, timeout_seconds=mail_wait)
 					except (CouldNotGetMessagesException, LookupError):
 						p_print(
 							f"Confirmation email not received (attempt {attempt}/{max_attempts}). "
@@ -1016,9 +1213,13 @@ async def register(
 		},
 	)
 
-	# Fire-and-forget delete_default in a background thread so the
-	# MEGA API call (~3-5s) does not block the main flow.
-	asyncio.create_task(asyncio.to_thread(delete_default, credentials))
+	# Remove MEGA's default "welcome" file *before* uploading so the user's
+	# upload can never be picked as "the default file" (and await it so it
+	# cannot race the upload).
+	try:
+		await asyncio.to_thread(delete_default, credentials)
+	except Exception:
+		pass
 
 	credentials.lastLogin = time.time()
 
@@ -1248,8 +1449,19 @@ def _action_view_credentials(config):
 	_filter = ""
 	_regex_mode = False
 
+	def _haystack(e) -> str:
+		"""Everything the search prompt claims to search."""
+		data = e["data"] or {}
+		return (
+			" ".join(
+				str(data.get(k, "") or "") for k in ("email", "notes", "tags", "id")
+			)
+			+ " "
+			+ e["key"]
+		)
+
 	while True:
-		# Filter entries by email, notes, or tags
+		# Filter entries by email, notes, tags, id or filename.
 		filtered = entries
 		if _filter:
 			if _regex_mode:
@@ -1257,12 +1469,13 @@ def _action_view_credentials(config):
 
 				try:
 					pat = _re.compile(_filter, _re.IGNORECASE)
-					filtered = [e for e in entries if pat.search(e["key"])]
-				except _re.error:
+					filtered = [e for e in entries if pat.search(_haystack(e))]
+				except _re.error as exc:
+					p_print(f"Invalid regex: {exc}", Colours.FAIL)
 					filtered = []
 			else:
 				fl = _filter.lower()
-				filtered = [e for e in entries if fl in e["key"].lower()]
+				filtered = [e for e in entries if fl in _haystack(e).lower()]
 		separator(
 			f"Saved credentials ({len(filtered)}/{len(entries)})"
 			f" {'[passwords shown]' if _show_passwords else ''}"
@@ -1308,8 +1521,8 @@ def _action_view_credentials(config):
 				Colours.OKGREEN if idx == _selected else Colours.OKCYAN,
 			)
 		p_print(
-			"  [p] reveal  [c] copy email  [C] copy pw  [d] delete  [n] notes"
-			"  [t] tag  [/] search  [r] regex  [Esc] clear  [q] back",
+			"  [p] reveal  [c] copy email  [C] copy pw  [d] delete  [a] delete all"
+			"  [n] notes  [t] tag  [/] search  [r] regex  [Esc] clear  [q] back",
 			Colours.WARNING,
 		)
 		key = input().strip().lower()
@@ -1321,6 +1534,8 @@ def _action_view_credentials(config):
 			new_filter = prompt_text("Search (email/notes/tags)")
 			if new_filter:
 				_filter = new_filter
+				# A fresh search is literal unless [r] is pressed afterwards.
+				_regex_mode = False
 				_selected = 0
 		elif key == "esc" or key == "\x1b" or key == chr(27):
 			_filter = ""
@@ -1383,7 +1598,15 @@ def _action_view_credentials(config):
 				except OSError as e:
 					p_print(f"Delete failed: {e}", Colours.FAIL)
 		elif key == "a" and filtered:
-			# Batch delete all visible
+			# Batch delete all visible — destructive, so require the user to
+			# type the exact count instead of a single keystroke.
+			count = len(filtered)
+			answer = prompt_text(
+				f"Type {count} to permanently delete {count} shown account(s)"
+			)
+			if (answer or "").strip() != str(count):
+				p_print("Batch delete cancelled.", Colours.WARNING)
+				continue
 			for e in list(filtered):
 				try:
 					if e["source"] == "json":
@@ -1443,16 +1666,22 @@ def _action_export(config):
 
 
 def _storage_bar(quota_gb: float, width: int = 20) -> str:
-	"""Render a simple ASCII bar showing storage usage vs 20 GB free tier."""
+	"""Render a simple bar showing storage usage vs the 20 GB free tier.
+
+	Falls back to ASCII when the terminal cannot render block glyphs.
+	"""
 	full = 20.0  # MEGA free tier is 20 GB
-	fraction = min(quota_gb / full, 1.0)
+	fraction = min(max(quota_gb, 0.0) / full, 1.0)
 	filled = int(fraction * width)
 	empty = width - filled
-	bar = "\033[92m" + "█" * filled + "\033[90m" + "░" * empty + "\033[0m"
+	if console.unicode_ok():
+		bar = "\033[92m" + "█" * filled + "\033[90m" + "░" * empty + "\033[0m"
+	else:
+		bar = "\033[92m" + "#" * filled + "\033[90m" + "-" * empty + "\033[0m"
 	return bar
 
 
-def _action_storage(config, json_output=False):
+def _action_storage(config, json_output=False, workers=0):
 	"""Show health dashboard — quota, status, age, notes for all accounts."""
 	from utilities.fs import list_credentials
 
@@ -1467,10 +1696,15 @@ def _action_storage(config, json_output=False):
 			pause()
 		return
 
-	from mega import Mega
+	# The health check talks to MEGA, so make sure the hashcash/402 patch and
+	# the compat shim are installed first.
+	_load_mega()
 	import datetime
+	import random
 
 	from concurrent.futures import ThreadPoolExecutor as _TPE
+
+	from services.upload import _safe_mega_session
 
 	alive = 0
 	dead = 0
@@ -1480,7 +1714,7 @@ def _action_storage(config, json_output=False):
 			"Health dashboard — querying storage for each account...", Colours.HEADER
 		)
 
-	def _check_one(_fname, creds, _mtime):
+	def _check_one(index, _fname, creds, _mtime):
 		age = datetime.datetime.now() - datetime.datetime.fromtimestamp(_mtime)
 		days = age.days
 		entry = {"email": creds.email, "age_days": days, "tags": creds.tags or ""}
@@ -1490,36 +1724,43 @@ def _action_storage(config, json_output=False):
 			login_str = f"{login_age}d ago" if login_age < 365 else ">1y ago"
 		else:
 			login_str = "never"
-		try:
-			mega = Mega()
-			mega.login(creds.email, creds.password)
-			quota = mega.get_quota() / 1024
+		# Small jitter so N logins don't hit MEGA at the same instant.
+		time.sleep(random.uniform(0.0, 0.3) * min(index, 4))
+		mega = _safe_mega_session(creds)
+		if mega is not None:
+			try:
+				quota = mega.get_quota() / 1024
+			except Exception:
+				mega = None
+		if mega is not None:
 			entry["status"] = "alive"
 			entry["quota_gb"] = round(quota, 2)
 			if not json_output:
 				_tag_str = f" [{creds.tags}]" if creds.tags else ""
 				p_print(
-					f"  {'✓':>3} {creds.email:<35} {quota:>5.1f} GB {_storage_bar(quota, 20)} {days:>3}d old"
+					f"  OK   {creds.email:<35} {quota:>5.1f} GB "
+					f"{_storage_bar(quota, 20)} {days:>3}d old"
 					f" ll:{login_str}{_tag_str}",
 					Colours.OKGREEN,
 				)
 			return entry, "alive"
-		except Exception:
-			entry["status"] = "dead"
-			entry["quota_gb"] = 0
-			if not json_output:
-				_tag_str = f" [{creds.tags}]" if creds.tags else ""
-				p_print(
-					f"  {'✗':>3} {creds.email:<35} {'DEAD':>8}  {days:>3}d old"
-					f" ll:{login_str}{_tag_str}",
-					Colours.FAIL,
-				)
-			return entry, "dead"
 
-	with _TPE(max_workers=min(20, max(5, len(creds_list)))) as pool:
+		entry["status"] = "dead"
+		entry["quota_gb"] = 0
+		if not json_output:
+			_tag_str = f" [{creds.tags}]" if creds.tags else ""
+			p_print(
+				f"  DEAD {creds.email:<35} {'-':>8}  {days:>3}d old"
+				f" ll:{login_str}{_tag_str}",
+				Colours.FAIL,
+			)
+		return entry, "dead"
+
+	max_workers = workers if workers > 0 else min(4, max(1, len(creds_list)))
+	with _TPE(max_workers=max_workers) as pool:
 		futures = [
-			pool.submit(_check_one, _fname, creds, _mtime)
-			for _fname, creds, _mtime in creds_list
+			pool.submit(_check_one, idx, _fname, creds, _mtime)
+			for idx, (_fname, creds, _mtime) in enumerate(creds_list)
 		]
 		entries = [f.result() for f in futures]
 
@@ -1560,7 +1801,12 @@ def _action_keepalive(config):
 	"""Keep all saved accounts alive."""
 	p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)
 	prune = prompt_yes_no("Remove dead accounts automatically?")
-	keepalive(console_args.verbose, prune=prune)
+	keepalive(
+		console_args.verbose,
+		prune=prune,
+		assume_yes=prune,
+		workers=console_args.workers,
+	)
 	pause("Press Enter to return to the menu...")
 
 
@@ -1877,12 +2123,10 @@ def _action_delete_account(executable_path, config):
 
 	if delete_account(creds):
 		p_print(f"Account {creds.email} deleted.", Colours.OKGREEN)
-		fname = f"credentials/{creds.email.split('@')[0]}.json"
-		try:
-			os.remove(fname)
-			p_print(f"Credential file removed: {fname}", Colours.OKGREEN)
-		except OSError:
-			pass
+		from utilities.fs import delete_credential
+
+		if delete_credential(creds.email):
+			p_print(f"Credential file removed for {creds.email}", Colours.OKGREEN)
 	else:
 		p_print(f"Failed to delete {creds.email}.", Colours.FAIL)
 	pause("Press Enter to return to the menu...")
@@ -1904,18 +2148,15 @@ def _action_change_password(executable_path, config):
 	from services.account import change_password
 
 	if change_password(creds, new_pw):
-		fname = f"credentials/{creds.email.split('@')[0]}.json"
-		try:
-			import json
+		from utilities.fs import update_credential
 
-			with open(fname, "r") as f:
-				data = json.load(f)
-			data["password"] = new_pw
-			with open(fname, "w") as f:
-				json.dump(data, f, indent=2)
+		if update_credential(creds.email, password=new_pw):
 			p_print("Credential file updated.", Colours.OKGREEN)
-		except (OSError, json.JSONDecodeError) as e:
-			p_print(f"Could not update credential file: {e}", Colours.WARNING)
+		else:
+			p_print(
+				"Could not update the credential file (encrypted or moved).",
+				Colours.WARNING,
+			)
 	pause("Press Enter to return to the menu...")
 
 
@@ -2034,14 +2275,14 @@ def _open_account_menu(executable_path, config):
 				"Show free quota for every saved account",
 			),
 			MenuItem(
-				"Delete Account",
+				"Delete Account (experimental)",
 				lambda: _action_delete_account(executable_path, config),
-				"Remove a MEGA account and all its files",
+				"Remove a MEGA account and all its files (unverified MEGA command)",
 			),
 			MenuItem(
-				"Change Password",
+				"Change Password (experimental)",
 				lambda: _action_change_password(executable_path, config),
-				"Set a new password for a MEGA account",
+				"Set a new password (unverified MEGA command)",
 			),
 			MenuItem(
 				"Create Folder",
@@ -2114,7 +2355,13 @@ def _sigint_handler(signum, frame):
 	sys.exit(0)
 
 
-def _loop_keepalive(verbose: bool, prune: bool, interval_hours: float):
+def _loop_keepalive(
+	verbose: bool,
+	prune: bool,
+	interval_hours: float,
+	assume_yes: bool = False,
+	workers: int = 0,
+):
 	"""Run keepalive in a loop every ``interval_hours``."""
 	interval_secs = interval_hours * 3600
 	p_print(
@@ -2122,7 +2369,7 @@ def _loop_keepalive(verbose: bool, prune: bool, interval_hours: float):
 		Colours.HEADER,
 	)
 	while True:
-		keepalive(verbose, prune=prune)
+		keepalive(verbose, prune=prune, assume_yes=assume_yes, workers=workers)
 		separator(f"Next run in {interval_hours:.1f}h", Colours.WARNING)
 		time.sleep(interval_secs)
 
@@ -2133,89 +2380,169 @@ def _setup_signal_handlers():
 	signal.signal(signal.SIGINT, _sigint_handler)
 
 
-_setup_signal_handlers()
+def _init_proxy_manager() -> None:
+	"""Build the global proxy manager from the parsed CLI arguments."""
+	global _proxy_manager
+	_proxy_manager = ProxyManager(
+		proxy=console_args.proxy,
+		proxy_file=console_args.proxy_file,
+		per_attempt=console_args.proxy_per_attempt,
+	)
+	if console_args.proxy_url and not _proxy_manager.active:
+		_proxy_manager.fetch_and_add(console_args.proxy_url)
 
-# Initialise global proxy manager from CLI args.
-_proxy_manager = ProxyManager(
-	proxy=console_args.proxy,
-	proxy_file=console_args.proxy_file,
-	per_attempt=console_args.proxy_per_attempt,
-)
-if console_args.proxy_url and not _proxy_manager.active:
-	_proxy_manager.fetch_and_add(console_args.proxy_url)
 
-if __name__ == "__main__":
-	set_verbose(console_args.verbose)
-	import threading as _th
+def _cmd_list_cloud(config) -> int:
+	"""``--list-cloud``: browse the cloud files of a saved account."""
+	_load_mega()
+	_action_browse_cloud(None, config)
+	return 0
 
-	_t = _th.Thread(target=auto_update, daemon=True)
-	_t.start()
-	_t.join(timeout=5)
 
-	executable_path, config = setup()
-	set_quiet(config.quiet if config else console_args.quiet)
-	if not executable_path:
-		p_print("Failed while setting up!", Colours.FAIL)
-		sys.exit(1)
+def _cmd_download_cloud(config) -> int:
+	"""``--download-cloud``: download one file by node ID."""
+	_load_mega()
+	from services.download import download_file, list_files
+	from utilities.fs import list_credentials
+
+	creds_list = list_credentials()
+	if not creds_list:
+		p_print("No saved credentials.", Colours.FAIL)
+		return 1
+	# Use the most recent account.
+	creds_list.sort(key=lambda x: x[2], reverse=True)
+	creds = creds_list[0][1]
+	dest = os.path.expanduser(console_args.download_dest)
+	if not os.path.isdir(dest):
+		p_print(f"Directory not found: {dest}", Colours.FAIL)
+		return 1
+	# Look up the file by node ID from the file listing.
+	file_id = console_args.download_cloud
+	all_files = list_files(creds)
+	match = next((f for f in all_files if str(f["id"]) == file_id), None)
+	if match is None:
+		p_print(
+			f"File not found: {file_id}. Use --list-cloud to see available IDs.",
+			Colours.FAIL,
+		)
+		return 1
+	download_file(creds, match["node"], dest)
+	return 0
+
+
+def _cmd_keepalive() -> int:
+	"""``--keepalive``: log into every saved account (optionally on a loop)."""
+	_load_mega()
+	p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)
+	if console_args.interval > 0:
+		_loop_keepalive(
+			console_args.verbose,
+			console_args.prune,
+			console_args.interval,
+			assume_yes=console_args.yes,
+			workers=console_args.workers,
+		)
+	else:
+		keepalive(
+			console_args.verbose,
+			prune=console_args.prune,
+			assume_yes=console_args.yes,
+			workers=console_args.workers,
+		)
+	return 0
+
+
+def main(argv=None) -> int:
+	"""CLI entrypoint.
+
+	Browser-free commands are dispatched before :func:`setup`, so they work on
+	machines without Chromium, in Docker/CI and from cron.
+	"""
+	global console_args
+
+	console_args = parser.parse_args(argv)
+
+	if console_args.json and not console_args.health:
+		p_print("--json requires --health.", Colours.FAIL)
+		return 2
 
 	if console_args.version:
 		p_print(f"MegaTemp {VERSION}", Colours.OKGREEN)
-		sys.exit(0)
-	elif console_args.health:
-		_action_storage(config, json_output=console_args.json)
-		sys.exit(0)
-	elif console_args.list_cloud:
-		_action_browse_cloud(executable_path, config)
-	elif console_args.download_cloud:
-		from services.download import download_file, list_files
-		from utilities.fs import list_credentials
+		return 0
 
-		creds_list = list_credentials()
-		if not creds_list:
-			p_print("No saved credentials.", Colours.FAIL)
-			sys.exit(1)
-		# Use the most recent account.
-		creds_list.sort(key=lambda x: x[2], reverse=True)
-		creds = creds_list[0][1]
-		dest = os.path.expanduser(console_args.download_dest)
-		if not os.path.isdir(dest):
-			p_print(f"Directory not found: {dest}", Colours.FAIL)
-			sys.exit(1)
-		# Look up the file by node ID from the file listing.
-		file_id = console_args.download_cloud
-		all_files = list_files(creds)
-		match = next((f for f in all_files if str(f["id"]) == file_id), None)
-		if match is None:
-			p_print(
-				f"File not found: {file_id}. Use --list-cloud to see available IDs.",
-				Colours.FAIL,
-			)
-			sys.exit(1)
-		download_file(creds, match["node"], dest)
-	elif console_args.extract:
+	if not _validate_provider():
+		return 2
+
+	set_json_mode(console_args.json)
+	set_quiet(console_args.quiet)
+	set_notify_enabled(console_args.notify)
+
+	if console_args.update:
+		auto_update()
+		return 0
+
+	if console_args.profile:
+		from utilities.fs import set_config_profile
+
+		set_config_profile(console_args.profile)
+
+	# Read-only config: browser-free commands must not create config.json.
+	config = _build_config(create=False)
+	# Config quiet is additive: --quiet always wins, and config.quiet can turn
+	# it on for interactive runs.
+	set_quiet(console_args.quiet or bool(getattr(config, "quiet", False)))
+
+	if console_args.health:
+		_action_storage(
+			config,
+			json_output=console_args.json,
+			workers=console_args.workers,
+		)
+		return 0
+
+	if console_args.extract:
 		p_print("Extracting credentials to credentials.txt ...", Colours.HEADER)
+		from services.extract import extract_credentials
+
 		extract_credentials(config.accountFormat)
-	elif console_args.export_keepass:
-		from services.extract import export_keepass_csv
+		return 0
 
-		export_keepass_csv()
-	elif console_args.export_bitwarden:
-		from services.extract import export_bitwarden_csv
+	export_commands = (
+		(console_args.export_keepass, "export_keepass_csv"),
+		(console_args.export_bitwarden, "export_bitwarden_csv"),
+		(console_args.export_onepassword, "export_onepassword_csv"),
+	)
+	for enabled, func_name in export_commands:
+		if enabled:
+			from services import extract as _extract
 
-		export_bitwarden_csv()
-	elif console_args.export_onepassword:
-		from services.extract import export_onepassword_csv
+			getattr(_extract, func_name)()
+			return 0
 
-		export_onepassword_csv()
-	elif console_args.keepalive:
-		p_print("Keeping accounts alive (logging in) ...", Colours.HEADER)
-		if console_args.interval > 0:
-			_loop_keepalive(
-				console_args.verbose, console_args.prune, console_args.interval
-			)
-		else:
-			keepalive(console_args.verbose, prune=console_args.prune)
-	elif console_args.loop is not None and console_args.loop > 1:
+	if console_args.list_cloud:
+		return _cmd_list_cloud(config)
+
+	if console_args.download_cloud:
+		return _cmd_download_cloud(config)
+
+	if console_args.keepalive:
+		return _cmd_keepalive()
+
+	# Everything below needs Chromium.
+	_load_web()
+	set_verbose(console_args.verbose)
+	_setup_signal_handlers()
+	_init_proxy_manager()
+
+	executable_path, config = setup()
+	if not executable_path:
+		p_print("Failed while setting up!", Colours.FAIL)
+		return 1
+
+	# Re-apply quiet in case the config changed it.
+	set_quiet(console_args.quiet or bool(getattr(config, "quiet", False)))
+
+	if console_args.loop is not None and console_args.loop > 1:
 		if console_args.parallel > 1:
 			parallel_registrations(
 				console_args.loop,
@@ -2229,6 +2556,7 @@ if __name__ == "__main__":
 				provider_name=console_args.provider,
 				webhook_url=console_args.webhook_url,
 				encryption_password=console_args.encryption_password,
+				mail_timeout=console_args.mail_timeout,
 			)
 		else:
 			loop_registrations(
@@ -2243,6 +2571,7 @@ if __name__ == "__main__":
 				provider_name=console_args.provider,
 				webhook_url=console_args.webhook_url,
 				encryption_password=console_args.encryption_password,
+				mail_timeout=console_args.mail_timeout,
 			)
 	elif any(
 		[
@@ -2267,8 +2596,16 @@ if __name__ == "__main__":
 				export_jsonl=console_args.export_jsonl,
 				provider_name=console_args.provider,
 				webhook_url=console_args.webhook_url,
+				mail_timeout=console_args.mail_timeout,
 			)
 		)
 	else:
-		# No flags -> launch the interactive TUI.
+		# No flags -> launch the interactive TUI. Updates are only checked
+		# here (never before dispatch) so scripted/JSON runs stay quiet.
+		auto_update()
 		_run_tui(executable_path, config)
+	return 0
+
+
+if __name__ == "__main__":
+	raise SystemExit(main())
