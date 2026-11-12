@@ -1,4 +1,3 @@
-import os
 import time
 
 
@@ -44,28 +43,27 @@ class TestEtc:
 		assert Colours.FAIL in captured.out
 		assert Colours.ENDC in captured.out
 
-	def test_clear_tmp(self, tmp_path):
+	def test_clear_tmp(self, tmp_path, monkeypatch):
+		from utilities import disk
 		from utilities.etc import clear_tmp
 
-		old = os.getcwd()
-		os.chdir(tmp_path)
-		os.makedirs("tmp/subdir")
-		with open("tmp/test.txt", "w") as f:
-			f.write("test")
-		assert os.path.exists("tmp")
-		result = clear_tmp()
-		assert result is True
-		assert not os.path.exists("tmp")
-		os.chdir(old)
+		profile_root = tmp_path / "profiles"
+		(profile_root / "subdir").mkdir(parents=True)
+		(profile_root / "test.txt").write_text("test")
+		monkeypatch.setattr(disk, "PROFILE_ROOT", str(profile_root))
+		monkeypatch.chdir(tmp_path)
 
-	def test_clear_tmp_no_tmp(self, tmp_path):
+		assert clear_tmp() is True
+		assert not profile_root.exists()
+
+	def test_clear_tmp_no_tmp(self, tmp_path, monkeypatch):
+		from utilities import disk
 		from utilities.etc import clear_tmp
 
-		old = os.getcwd()
-		os.chdir(tmp_path)
-		result = clear_tmp()
-		assert result is True  # No tmp dir = success
-		os.chdir(old)
+		monkeypatch.setattr(disk, "PROFILE_ROOT", str(tmp_path / "missing"))
+		monkeypatch.chdir(tmp_path)
+
+		assert clear_tmp() is True  # No profile dir = success
 
 	def test_status_line(self, capsys):
 		from utilities.etc import status_line, clear_status_line, Colours

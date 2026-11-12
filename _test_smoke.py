@@ -542,6 +542,18 @@ def _test_cli():
 
 	_check(callable(locked), "utilities.filelock.locked importable")
 
+	from utilities import disk as _disk
+
+	_check(callable(_disk.profile_dir), "utilities.disk.profile_dir importable")
+	_check(callable(_disk.clean_all), "utilities.disk.clean_all importable")
+
+	with _timed("CLI --disk-usage"):
+		r = subprocess.run(
+			base + ["--disk-usage"], capture_output=True, text=True, timeout=30
+		)
+	_check(r.returncode == 0, "--disk-usage exits 0")
+	_check("Chromium profiles" in r.stdout, "--disk-usage lists profiles")
+
 
 def main():
 	start = time.perf_counter()

@@ -90,7 +90,7 @@ python main.py
 Run without arguments:
 
 ```
-MegaTemp v1.7.0
+MegaTemp v1.8.0
 ╔══════════════════════════════════════════════════════╗
 ║  Create Account                                      ║
 ║  Loop Create                                         ║
@@ -146,11 +146,37 @@ Settings (per-session): max retries, visible browser, CSV export toggle.
 | `--proxy-url <url>` | Auto-fetch proxy list from a remote URL |
 | `--encryption-password <pw>` | Encrypt saved passwords at rest |
 | `--profile <name>` | Use `config-{name}.json` instead of `config.json` |
+| `--disk-usage` | Show where profiles, credentials and backups use disk space |
+| `--clean` | Remove stale profiles, orphan `.part` files, update leftovers and old backups |
 | `--export-bitwarden` | Export credentials in Bitwarden CSV format |
 | `--export-onepassword` | Export credentials in 1Password CSV format |
 | `--export-keepass` | Export credentials in KeePass CSV format |
 
 > **Don't** combine services (`-e`, `-ka`) with upload (`-f`, `-p`).
+
+---
+
+## Disk usage
+
+MegaTemp keeps Chromium profiles, downloads and backups out of the project
+directory so a crash cannot bloat the repo:
+
+| Location | What | Cleanup |
+|---|---|---|
+| `%TEMP%/MegaTemp/` | Per-run Chromium profiles (10–80 MB each) | Swept at startup after 24 h; `--clean` |
+| `credentials/` | One JSON file per account | `--prune` / manual |
+| `credentials/pruned/` | Backups of pruned accounts | Kept to the 100 newest; `--clean` |
+| `*.part` | Interrupted downloads | `--clean` |
+| `<exe>.old` / `<exe>.new` | Auto-update leftovers | Removed on startup; `--clean` |
+
+```bash
+python main.py --disk-usage   # per-location breakdown
+python main.py --clean        # remove everything reclaimable
+python scripts/disk_report.py # runtime + build artifact report (dev)
+```
+
+Chromium's disk and media caches are capped at 1 MB per profile and its shader
+cache is disabled. Release binaries are kept under a 25 MB CI budget.
 
 ---
 

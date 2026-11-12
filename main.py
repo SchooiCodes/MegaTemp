@@ -50,6 +50,13 @@ from utilities.etc import (  # noqa: E402
 	send_webhook,
 	capture_worker_output,
 )
+from utilities.disk import (  # noqa: E402
+	clean_all,
+	cleanup_stale_profiles,
+	profile_dir,
+	prune_backups,
+	usage_report,
+)
 from utilities.menu import (  # noqa: E402
 	Menu,
 	MenuItem,
@@ -188,6 +195,11 @@ _BROWSER_BASE_ARGS = [
 	"--disable-background-networking",
 	"--disable-sync",
 	"--disable-background-timer-throttling",
+	# Keep Chromium's on-disk caches tiny: registration sessions are short and
+	# a profile used to grow to tens of MB per worker.
+	"--disk-cache-size=1048576",
+	"--media-cache-size=1048576",
+	"--disable-gpu-shader-disk-cache",
 	"--disable-infobars",
 	"--window-position=0,0",
 	"--ignore-certificate-errors",
@@ -312,6 +324,15 @@ def _build_browser_args(proxy_override: str | None = None) -> list[str]:
 	return base
 
 
+def _fmt_bytes(size: float) -> str:
+	"""Human-readable byte size for --disk-usage / --clean."""
+	for unit in ("B", "KB", "MB", "GB"):
+		if size < 1024 or unit == "GB":
+			return f"{int(size)} B" if unit == "B" else f"{size:.1f} {unit}"
+		size /= 1024
+	return f"{size:.1f} GB"
+
+
 async def _launch_browser(kwargs: dict):
 	"""Launch pyppeteer and close default about:blank pages."""
 	last_error = None
@@ -395,7 +416,20 @@ reg.add_argument(
 	"--keep-profiles",
 	required=False,
 	action="store_true",
-	help="Keep the per-worker Chromium profiles (tmp_<n>/) after a parallel run.",
+	help="Keep the per-worker Chromium profiles after a parallel run.",
+)
+reg.add_argument(
+	"--disk-usage",
+	required=False,
+	action="store_true",
+	help="Show where MegaTemp uses disk space and exit (no browser needed).",
+)
+reg.add_argument(
+	"--clean",
+	required=False,
+	action="store_true",
+	help="Remove stale Chromium profiles, orphan .part files, update leftovers "
+	"and old credential backups, then show disk usage.",
 )
 reg.add_argument(
 	"--resume",
@@ -783,7 +817,7 @@ def loop_registrations(
 			{
 				"headless": not visible,
 				"ignoreHTTPSErrors": True,
-				"userDataDir": f"{_CWD}/tmp",
+				"userDataDir": profile_dir("tmp"),
 				"args": _build_browser_args(),
 				"executablePath": executable_path,
 				"autoClose": False,
@@ -928,7 +962,7 @@ def parallel_registrations(
 		_browser_kwargs = {
 			"headless": not visible,
 			"ignoreHTTPSErrors": True,
-			"userDataDir": f"{_CWD}/tmp_{worker_id}",
+			"userDataDir": profile_dir(f"tmp_{worker_id}"),
 			"args": _build_browser_args(proxy_override=proxy),
 			"executablePath": executable_path,
 			"autoClose": False,
@@ -1016,7 +1050,7 @@ def parallel_registrations(
 				pass
 			_cleanup_pyppeteer(browser)
 			if not keep_profiles:
-				shutil.rmtree(f"{_CWD}/tmp_{worker_id}", ignore_errors=True)
+				shutil.rmtree(profile_dir(f"tmp_{worker_id}"), ignore_errors=True)
 
 	async def _run_all():
 		_install_async_handler()
@@ -1087,7 +1121,7 @@ async def _isolate_worker_async(
 	browser_kwargs = {
 		"headless": not payload["visible"],
 		"ignoreHTTPSErrors": True,
-		"userDataDir": f"{_CWD}/tmp_{worker_id}",
+		"userDataDir": profile_dir(f"tmp_{worker_id}"),
 		"args": _build_browser_args(proxy_override=proxy),
 		"executablePath": payload["executable_path"],
 		"autoClose": False,
@@ -1155,7 +1189,7 @@ async def _isolate_worker_async(
 			pass
 		_cleanup_pyppeteer(browser)
 		if not payload.get("keep_profiles"):
-			shutil.rmtree(f"{_CWD}/tmp_{worker_id}", ignore_errors=True)
+			shutil.rmtree(profile_dir(f"tmp_{worker_id}"), ignore_errors=True)
 
 
 def _run_isolated_workers(
@@ -1292,7 +1326,7 @@ async def register(
 				{
 					"headless": not visible,
 					"ignoreHTTPSErrors": True,
-					"userDataDir": f"{_CWD}/tmp",
+					"userDataDir": profile_dir("tmp"),
 					"args": _build_browser_args(),
 					"executablePath": executable_path,
 					"autoClose": False,
@@ -1329,7 +1363,7 @@ async def register(
 						{
 							"headless": not visible,
 							"ignoreHTTPSErrors": True,
-							"userDataDir": f"{_CWD}/tmp",
+							"userDataDir": profile_dir("tmp"),
 							"args": _build_browser_args(),
 							"executablePath": executable_path,
 							"autoClose": False,
@@ -2712,6 +2746,24 @@ def main(argv=None) -> int:
 	if console_args.version:
 		p_print(f"MegaTemp {VERSION}", Colours.OKGREEN)
 		return 0
+
+	if console_args.clean or console_args.disk_usage:
+		if console_args.clean:
+			p_print("Cleaning up ...", Colours.HEADER)
+			for label, count, size in clean_all():
+				p_print(
+					f"  {label}: {count} removed ({_fmt_bytes(size)})",
+					Colours.OKGREEN,
+				)
+		p_print("Disk usage:", Colours.HEADER)
+		for label, count, size in usage_report():
+			p_print(f"  {label}: {count} files, {_fmt_bytes(size)}")
+		return 0
+
+	# Profiles are large (10-80 MB each); sweep ones no run has touched in a
+	# day, and cap the pruned-credentials backup directory.
+	cleanup_stale_profiles()
+	prune_backups()
 
 	if not _validate_provider():
 		return 2

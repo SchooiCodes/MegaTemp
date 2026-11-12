@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from utilities import console
 from utilities.models import Colours, Credentials
 
-VERSION = "v1.7.0"
+VERSION = "v1.8.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 
 # Desktop notifications are opt-in (see set_notify_enabled) because popups are
@@ -83,7 +83,9 @@ def clear_tmp() -> bool:
 	Chrome's crashpad holds file locks) we kill the locking processes and
 	retry once. A missing tmp/ is treated as success.
 	"""
-	tmp_dir = "tmp"
+	from utilities.disk import PROFILE_ROOT
+
+	tmp_dir = PROFILE_ROOT
 	if not os.path.exists(tmp_dir):
 		return True
 

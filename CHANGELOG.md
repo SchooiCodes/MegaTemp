@@ -3,6 +3,28 @@
 All notable changes to MegaTemp are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [v1.8.0] - 2026-11-12
+
+### Changed
+- **Much smaller binaries** - dropped `Faker` (17 MB installed, used for one
+  first-name) for a built-in name list, and replaced `cryptography`/Fernet with
+  AES-256-GCM via pycryptodome (already required by `mega.py`). Legacy `ENC:`
+  Fernet credentials still decrypt, and `OBS:` files keep working. PyInstaller
+  now strips and optimizes bytecode and excludes unused stdlib/tooling packages.
+- **Correct source tarball** - release archives no longer include PyInstaller's
+  `build/` directory (38 MB -> ~1.5 MB).
+- **Profiles live in the temp dir** - Chromium user-data dirs moved from the
+  project directory to `%TEMP%/MegaTemp`, so a crash no longer leaves tens of
+  MB per worker in the repo.
+- **Disk hygiene** - startup sweeps profiles untouched for 24 h and caps
+  `credentials/pruned/` at the 100 newest backups; Chromium's disk/media caches
+  are capped at 1 MB and the shader cache is disabled.
+- **New CLI** - `--disk-usage` prints a per-location breakdown and `--clean`
+  removes stale profiles, orphan `.part` files, update leftovers and old
+  backups; both run without a browser.
+- **CI** - builds fail if an artifact exceeds 25 MB, and
+  `scripts/disk_report.py` reports runtime and artifact sizes locally.
+
 ## [v1.7.0] - 2026-11-12
 
 ### Added

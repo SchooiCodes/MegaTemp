@@ -58,6 +58,16 @@ jobs:
           pip uninstall pathlib -y 2>/dev/null || true
       - name: Build
         run: pyinstaller MegaTemp.spec --noconfirm --clean
+      - name: Check binary size
+        shell: bash
+        run: |
+          python -c "
+          import os, sys
+          size = os.path.getsize(sys.argv[1])
+          limit = int(sys.argv[2])
+          print(f'{sys.argv[1]}: {size / 1048576:.1f} MB (budget {limit / 1048576:.0f} MB)')
+          sys.exit(1 if size > limit else 0)
+          " "${{ matrix.binary }}" 26214400
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
