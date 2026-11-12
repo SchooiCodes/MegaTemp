@@ -115,7 +115,7 @@ class TestMainCLI:
 			text=True,
 			timeout=10,
 		)
-		assert "v1.5.0" in result.stdout
+		assert "v1.6.0" in result.stdout
 
 	def test_main_provider_validation_valid(self):
 		import subprocess
@@ -127,7 +127,7 @@ class TestMainCLI:
 			timeout=10,
 		)
 		assert result.returncode == 0
-		assert "v1.5.0" in result.stdout
+		assert "v1.6.0" in result.stdout
 
 	def test_main_provider_validation_invalid_stderr(self):
 		import subprocess
@@ -242,7 +242,7 @@ class TestMainCLI:
 			timeout=10,
 		)
 		assert result.returncode == 0
-		assert "v1.5.0" in result.stdout
+		assert "v1.6.0" in result.stdout
 
 
 # ======================================================================

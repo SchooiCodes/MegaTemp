@@ -170,7 +170,7 @@ class TestFastBrowserFreeCommands:
 			timeout=10,
 		)
 		assert result.returncode == 0
-		assert "v1.5.0" in result.stdout
+		assert "v1.6.0" in result.stdout
 		assert not (tmp_path / "config.json").exists()
 		assert time.monotonic() - start < 2.0
 
@@ -188,3 +188,38 @@ class TestFastBrowserFreeCommands:
 		assert "error" in data or "accounts" in data
 		assert not (tmp_path / "config.json").exists()
 		assert time.monotonic() - start < 2.0
+
+
+class TestRemainingAuditEdges:
+	def test_find_credential_path_accounts_txt(self, isolated_fs):
+		from utilities.fs import find_credential_path, save_credentials
+
+		save_credentials(
+			Credentials(email="txt@example.com", password="pw"),
+			"{email}#{password}",
+		)
+		path = find_credential_path("txt@example.com")
+		assert path is not None
+		assert path.endswith("accounts.txt")
+
+	def test_patch_mega_is_idempotent(self):
+		# Run in a subprocess so patching does not leak into other tests.
+		code = (
+			"import utilities.compat  # restores asyncio.coroutine\n"
+			"from utilities.mega_patch import patch_mega\n"
+			"import mega\n"
+			"patch_mega()\n"
+			"first = mega.Mega._api_request\n"
+			"patch_mega()\n"
+			"assert mega.Mega._api_request is first\n"
+			"print('ok')\n"
+		)
+		result = subprocess.run(
+			[sys.executable, "-c", code],
+			capture_output=True,
+			text=True,
+			cwd=os.path.dirname(MAIN_PY),
+			timeout=60,
+		)
+		assert result.returncode == 0, result.stderr
+		assert "ok" in result.stdout

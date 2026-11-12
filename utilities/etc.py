@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from utilities import console
 from utilities.models import Colours, Credentials
 
-VERSION = "v1.5.0"
+VERSION = "v1.6.0"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 
 # Desktop notifications are opt-in (see set_notify_enabled) because popups are

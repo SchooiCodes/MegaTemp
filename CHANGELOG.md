@@ -3,6 +3,31 @@
 All notable changes to MegaTemp are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [v1.6.0] - 2026-11-12
+
+### Fixed
+- **Credential safety** - decrypt-aware load/find/update/delete helpers;
+  keepalive pruning now requires `--yes` (or a TTY confirmation), only removes
+  definitive auth failures, and backs files up under `credentials/pruned/`.
+- **Reliability** - hashcash/402 handling and error-code mapping in the
+  `mega.py` patches; downloads write to `.part` and rename on success; password
+  change is guarded; unknown config keys are tolerated.
+- **Providers** - repaired mail.tm and Guerrilla Mail login/message retrieval,
+  carried the session token in `Mailbox`, and generated real MEGA passwords.
+- **Viewer/health** - search covers email/notes/tags/id/filename; batch delete
+  requires typing the count; the health dashboard caps workers and uses
+  ASCII-safe output with `OK`/`DEAD` labels.
+- **Windows/CI** - console shim for legacy code pages, `NO_COLOR`, and
+  `MEGATEMP_ASCII`; the smoke suite now runs in CI.
+
+### Changed
+- CLI dispatch moved into `main(argv)` with lazy imports. Browser-free commands
+  (`--version`, `--health`, exports, cloud listing, `--keepalive`) no longer
+  need Chromium or write `config.json`. Added `--yes`, `--notify`, `--workers`,
+  `--browser`, and `--update`; `--json` requires `--health`.
+- Build/CI split runtime, dev, and build requirements; the Docker image uses
+  the system Chromium; CI now covers Python 3.11-3.13 and Windows.
+
 ## [v1.5.0] - 2026-08-07
 
 ### Added
