@@ -202,7 +202,15 @@ _proxy_manager: ProxyManager | None = None
 # NetworkError ("Target closed." / "No session with given id"). asyncio's GC
 # then logs them as "Future exception was never retrieved". These are not real
 # errors, so we swallow exactly those while letting anything else through.
-_HARMLESS_ASYNC_ERRORS = ("Target closed", "No session with given id")
+_HARMLESS_ASYNC_ERRORS = (
+	"Target closed",
+	"No session with given id",
+	# Windows Proactor loop noise when MEGA or mail.tm drops a keep-alive
+	# connection while a worker is polling; the request itself is retried.
+	"ConnectionResetError",
+	"ConnectionAbortedError",
+	"WinError 10054",
+)
 
 
 def _quiet_async_exceptions(loop, context):
@@ -754,6 +762,7 @@ def loop_registrations(
 
 	async def _run_all():
 		nonlocal successes, failures, skip
+		_install_async_handler()
 		p_print(f"Launching browser ({executable_path}) ...", Colours.HEADER)
 		browser = await _launch_browser(
 			{
@@ -955,6 +964,12 @@ def parallel_registrations(
 				async with _lock:
 					for text, colour in buf:
 						p_print(text, colour)
+					done = min(successes + failures, loop_count)
+					p_print(
+						f"[{done}/{loop_count}] ok={successes} failed={failures}"
+						f" ({elapsed(start)})",
+						Colours.OKBLUE,
+					)
 		finally:
 			try:
 				await browser.close()
@@ -963,6 +978,7 @@ def parallel_registrations(
 			_cleanup_pyppeteer(browser)
 
 	async def _run_all():
+		_install_async_handler()
 		proxies = _proxy_manager.distribute(parallelism)
 		tasks = [_worker(i, proxy=proxies[i]) for i in range(parallelism)]
 		await asyncio.gather(*tasks)

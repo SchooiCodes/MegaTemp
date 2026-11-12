@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from utilities import console
 from utilities.models import Colours, Credentials
 
-VERSION = "v1.6.0"
+VERSION = "v1.6.1"
 UPDATE_URL = "https://api.github.com/repos/SchooiCodes/MegaTemp/tags"
 
 # Desktop notifications are opt-in (see set_notify_enabled) because popups are
@@ -679,6 +679,11 @@ def status_line(text: str, colour: str = Colours.OKCYAN) -> None:
 	throttled to one newline-terminated line every few seconds instead.
 	"""
 	global _last_status_emit
+	# Parallel workers capture their output and flush it as one block. Writing
+	# an in-place status line here would fight other workers for the same
+	# terminal row, so skip it while a buffer is active.
+	if _print_buffer.get() is not None:
+		return
 	if not _stdout_is_tty():
 		now = time.monotonic()
 		if now - _last_status_emit < 3.0:
@@ -694,6 +699,8 @@ def status_line(text: str, colour: str = Colours.OKCYAN) -> None:
 
 def clear_status_line() -> None:
 	"""Clears the in-place status line and moves to a fresh line."""
+	if _print_buffer.get() is not None:
+		return
 	if not _stdout_is_tty():
 		return
 	stream = _out_stream()

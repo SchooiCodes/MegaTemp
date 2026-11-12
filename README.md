@@ -90,7 +90,7 @@ python main.py
 Run without arguments:
 
 ```
-MegaTemp v1.6.0
+MegaTemp v1.6.1
 ╔══════════════════════════════════════════════════════╗
 ║  Create Account                                      ║
 ║  Loop Create                                         ║

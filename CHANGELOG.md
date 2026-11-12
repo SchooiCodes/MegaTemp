@@ -3,6 +3,17 @@
 All notable changes to MegaTemp are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [v1.6.1] - 2026-11-12
+
+### Fixed
+- **Parallel output** - in-place polling status lines no longer fight each
+  other for one terminal row, so per-account blocks stay intact; each finished
+  account now prints a `[done/total] ok=… failed=…` progress line.
+- **Windows noise** - connection-reset errors from the Proactor loop are
+  suppressed instead of printing tracebacks during parallel runs.
+- **CI** - the smoke test derives its version from `VERSION` and tolerates the
+  config warning on `--version`, so tag builds pass again.
+
 ## [v1.6.0] - 2026-11-12
 
 ### Fixed

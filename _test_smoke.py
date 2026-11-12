@@ -160,7 +160,7 @@ def _test_etc():
 		capture_worker_output,
 	)
 
-	_check(VERSION == "v1.5.0", f"VERSION is {VERSION}")
+	_check(VERSION.startswith("v"), f"VERSION is {VERSION}")
 
 	e = elapsed(time.monotonic() - 60)
 	_check("s" in e, f"elapsed(60s): {e}")
@@ -307,7 +307,8 @@ def _test_main():
 	m._proxy_manager = ProxyManager()
 
 	_check(
-		m._HARMLESS_ASYNC_ERRORS == ("Target closed", "No session with given id"),
+		"Target closed" in m._HARMLESS_ASYNC_ERRORS
+		and "ConnectionResetError" in m._HARMLESS_ASYNC_ERRORS,
 		"harmless errors defined",
 	)
 	_check(
@@ -450,6 +451,8 @@ def _test_cli():
 	_section("CLI (subprocess)")
 	import subprocess
 
+	from utilities.etc import VERSION
+
 	base = [sys.executable, "main.py"]
 
 	with _timed("CLI --help"):
@@ -467,7 +470,7 @@ def _test_cli():
 			base + ["--version"], capture_output=True, text=True, timeout=15
 		)
 	_check(r.returncode == 0, "--version exits 0")
-	_check("v1.5.0" in r.stdout, f"--version shows {r.stdout!r}")
+	_check(VERSION in r.stdout, f"--version shows {r.stdout!r}")
 
 	with _timed("CLI --health --json"):
 		r = subprocess.run(
