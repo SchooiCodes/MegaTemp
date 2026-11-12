@@ -33,7 +33,8 @@ def _is_auth_failure(exc: Exception) -> bool:
 
 def _is_undecryptable(data: dict) -> bool:
 	return any(
-		isinstance(v, str) and v.startswith(("ENC:", "OBS:")) for v in data.values()
+		isinstance(v, str) and v.startswith(("ENC2:", "ENC:", "OBS:"))
+		for v in data.values()
 	)
 
 

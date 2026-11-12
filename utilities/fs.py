@@ -289,45 +289,112 @@ def _encrypt_key(password: str) -> bytes:
 	return hashlib.sha256(password.encode()).digest()
 
 
-def encrypt_credential(data: dict, password: str) -> dict:
-	"""Encrypt credential data fields (email, password) in-place.
+def _fernet_decrypt(token: str, password: str) -> str:
+	"""Decrypt a legacy ``ENC:`` token (cryptography's Fernet format).
 
-	Only fields containing sensitive info are encrypted. Falls back to
-	base64 obfuscation if cryptography is not installed, with a warning.
+	Fernet is AES-128-CBC + HMAC-SHA256; implementing the reader with
+	pycryptodome means old credentials still open without shipping the
+	~10 MB `cryptography` package.
+	"""
+	import base64
+	import hashlib
+	import hmac
+
+	from Crypto.Cipher import AES
+	from Crypto.Util.Padding import unpad
+
+	raw = base64.urlsafe_b64decode(token.encode())
+	if len(raw) < 57 or raw[0] != 0x80:
+		raise ValueError("not a Fernet token")
+	iv = raw[9:25]
+	body = raw[25:-32]
+	signature = raw[-32:]
+	key = _encrypt_key(password)
+	expected = hmac.new(key[:16], raw[:-32], hashlib.sha256).digest()
+	if not hmac.compare_digest(expected, signature):
+		raise ValueError("invalid token")
+	plain = AES.new(key[16:], AES.MODE_CBC, iv).decrypt(body)
+	return unpad(plain, AES.block_size).decode()
+
+
+def _obfuscate(value: str, password: str) -> str:
+	"""Legacy ``OBS:`` fallback used only when pycryptodome is missing."""
+	import base64
+
+	key = _encrypt_key(password)
+	enc = bytes(
+		a ^ b
+		for a, b in zip(
+			value.encode().ljust(64, b"\0")[:64],
+			(key * (64 // len(key) + 1))[:64],
+			strict=True,
+		)
+	)
+	return "OBS:" + base64.b64encode(enc).decode()
+
+
+def _deobfuscate(value: str, password: str) -> str:
+	import base64
+
+	key = _encrypt_key(password)
+	enc = base64.b64decode(value)
+	dec = bytes(
+		a ^ b
+		for a, b in zip(
+			enc,
+			(key * (len(enc) // len(key) + 1))[: len(enc)],
+			strict=True,
+		)
+	)
+	return dec.rstrip(b"\0").decode(errors="replace")
+
+
+def _decrypt_gcm(value: str, password: str) -> str:
+	import base64
+
+	from Crypto.Cipher import AES
+
+	raw = base64.b64decode(value)
+	nonce, tag, ciphertext = raw[:12], raw[12:28], raw[28:]
+	cipher = AES.new(_encrypt_key(password), AES.MODE_GCM, nonce=nonce)
+	return cipher.decrypt_and_verify(ciphertext, tag).decode()
+
+
+def encrypt_credential(data: dict, password: str) -> dict:
+	"""Encrypt the sensitive credential fields in-place.
+
+	New writes use ``ENC2:`` (AES-256-GCM). Legacy ``ENC:`` (Fernet) values
+	remain readable, and ``OBS:`` is only used if pycryptodome is missing.
 	"""
 	if not password:
 		return data
 
 	import base64
+	import os
 
 	fields = ["password", "emailPassword"]
+
+	try:
+		from Crypto.Cipher import AES
+	except ImportError:
+		p_print(
+			"Install 'pycryptodome' for real encryption: pip install pycryptodome",
+			Colours.WARNING,
+		)
+		for f in fields:
+			val = data.get(f, "")
+			if val:
+				data[f] = _obfuscate(val, password)
+		return data
 
 	for f in fields:
 		val = data.get(f, "")
 		if not val:
 			continue
-		try:
-			from cryptography.fernet import Fernet
-
-			key = base64.urlsafe_b64encode(_encrypt_key(password))
-			f_obj = Fernet(key)
-			data[f] = "ENC:" + f_obj.encrypt(val.encode()).decode()
-		except ImportError:
-			# Fallback: simple obfuscation (not real encryption!)
-			p_print(
-				"Install 'cryptography' for real encryption: pip install cryptography",
-				Colours.WARNING,
-			)
-			key = _encrypt_key(password)
-			enc_bytes = bytes(
-				a ^ b
-				for a, b in zip(
-					val.encode().ljust(64, b"\0")[:64],
-					(key * (64 // len(key) + 1))[:64],
-					strict=True,
-				)
-			)
-			data[f] = "OBS:" + base64.b64encode(enc_bytes).decode()
+		nonce = os.urandom(12)
+		cipher = AES.new(_encrypt_key(password), AES.MODE_GCM, nonce=nonce)
+		ciphertext, tag = cipher.encrypt_and_digest(val.encode())
+		data[f] = "ENC2:" + base64.b64encode(nonce + tag + ciphertext).decode()
 	return data
 
 
@@ -336,34 +403,22 @@ def decrypt_credential(data: dict, password: str) -> dict:
 	if not password:
 		return data
 
-	import base64
-
 	fields = ["password", "emailPassword"]
 
 	for f in fields:
 		val = data.get(f, "")
-		if val.startswith("ENC:"):
-			try:
-				from cryptography.fernet import Fernet, InvalidToken
-
-				key = base64.urlsafe_b64encode(_encrypt_key(password))
-				f_obj = Fernet(key)
-				data[f] = f_obj.decrypt(val[4:].encode()).decode()
-			except (ImportError, InvalidToken) as e:
-				p_print(f"Failed to decrypt field '{f}': {e}", Colours.FAIL)
-				data[f] = ""
-		elif val.startswith("OBS:"):
-			key = _encrypt_key(password)
-			enc = base64.b64decode(val[4:])
-			dec = bytes(
-				a ^ b
-				for a, b in zip(
-					enc,
-					(key * (len(enc) // len(key) + 1))[: len(enc)],
-					strict=True,
-				)
-			)
-			data[f] = dec.rstrip(b"\0").decode(errors="replace")
+		if not val:
+			continue
+		try:
+			if val.startswith("ENC2:"):
+				data[f] = _decrypt_gcm(val[5:], password)
+			elif val.startswith("ENC:"):
+				data[f] = _fernet_decrypt(val[4:], password)
+			elif val.startswith("OBS:"):
+				data[f] = _deobfuscate(val[4:], password)
+		except Exception as e:
+			p_print(f"Failed to decrypt field '{f}': {e}", Colours.FAIL)
+			data[f] = ""
 	return data
 
 
@@ -401,7 +456,8 @@ def load_credential_file(path: str, password: str | None = None) -> tuple[dict, 
 	with open(path, "r", encoding="utf-8") as fh:
 		data = json.load(fh)
 	encrypted = any(
-		isinstance(v, str) and v.startswith(("ENC:", "OBS:")) for v in data.values()
+		isinstance(v, str) and v.startswith(("ENC2:", "ENC:", "OBS:"))
+		for v in data.values()
 	)
 	if encrypted:
 		key = _get_encryption_password() if password is None else password

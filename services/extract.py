@@ -142,7 +142,8 @@ def extract_credentials(account_format: str = "{email}#{password}") -> None:
 			password = data.get("password", "")
 			emailPassword = data.get("emailPassword", "")
 			if was_encrypted and any(
-				str(v).startswith(("ENC:", "OBS:")) for v in (password, emailPassword)
+				str(v).startswith(("ENC2:", "ENC:", "OBS:"))
+				for v in (password, emailPassword)
 			):
 				p_print(
 					f"Cannot decrypt {file} (no/wrong encryption password), skipping...",

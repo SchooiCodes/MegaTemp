@@ -214,6 +214,19 @@ class TestEncryption:
 		assert len(files) == 1
 		with open(files[0]) as f:
 			raw = json.load(f)
-		assert raw["password"].startswith(("ENC:", "OBS:"))
+		assert raw["password"].startswith(("ENC2:", "ENC:", "OBS:"))
 		# list_credentials should auto-decrypt if config has the password
 		# (without config it returns encrypted data — that's OK, no crash)
+
+
+def test_legacy_fernet_token_decrypts_without_cryptography():
+	"""ENC: tokens written by older versions still open (Fernet-compatible)."""
+	from utilities.fs import decrypt_credential
+
+	token = (
+		"gAAAAABq9jJX_iFNJFt9OZj800TskocSkbLW64kTy9RfHqeBpgbiv9o4IPIGxTKhT0Wx00dGp_"
+		"fTbxYXl4szqDuucty28jtxyA=="
+	)
+	data = {"password": "ENC:" + token, "emailPassword": ""}
+	decrypt_credential(data, "pw")
+	assert data["password"] == "legacy-secret"
