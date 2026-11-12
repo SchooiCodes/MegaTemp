@@ -119,7 +119,8 @@ jobs:
             --exclude='__pycache__' --exclude='*.pyc' \
             --exclude='.ruff_cache' --exclude='.mypy_cache' \
             --exclude='.idea' \
-            --exclude='dist' \
+            --exclude='dist' --exclude='build' \
+            --exclude='.pytest_cache' --exclude='*.egg-info' \
             -czf "dist/MegaTemp-${GITHUB_REF_NAME}-src.tar.gz" .
           gh release upload "${GITHUB_REF_NAME}" \
             "dist/MegaTemp-${GITHUB_REF_NAME}-src.tar.gz" --clobber

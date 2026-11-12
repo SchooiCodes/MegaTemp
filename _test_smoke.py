@@ -210,22 +210,16 @@ def _test_web():
 	from utilities.web import (
 		set_verbose,
 		get_random_string,
-		_get_faker,
+		random_first_name,
 	)
 
 	set_verbose(True)
 	set_verbose(False)
 	_check(True, "set_verbose toggles")
 
-	with _timed("_get_faker (first call — lazy init)"):
-		f = _get_faker()
-	_check(f is not None, "_get_faker returns instance")
-
-	with _timed("_get_faker (cached)"):
-		f2 = _get_faker()
-	_check(f2 is f, "_get_faker is cached (same instance)")
-	name = f.first_name()
-	_check(len(name) > 0, f"Faker generates name: {name}")
+	with _timed("random_first_name"):
+		name = random_first_name()
+	_check(isinstance(name, str) and len(name) > 0, f"random_first_name: {name}")
 
 	for length in [0, 1, 10, 100]:
 		s = get_random_string(length)

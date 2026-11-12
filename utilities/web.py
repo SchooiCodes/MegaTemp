@@ -9,7 +9,6 @@ import html
 from typing import TYPE_CHECKING
 import requests
 import pymailtm
-from faker import Faker
 
 if TYPE_CHECKING:
 	from utilities.provider import EmailProvider
@@ -120,16 +119,47 @@ async def _robust_type(page, selector: str, text: str):
 	return value
 
 
-# Lazy-init Faker instance so we don't load its locale data at module level
-# (that adds ~200ms to startup). First call to _get_faker() creates and caches it.
-_fake = None
+# A short built-in list keeps registration looking human without pulling in
+# Faker and its ~17 MB of locale data.
+_FIRST_NAMES = (
+	"Alex",
+	"Anna",
+	"Ben",
+	"Carla",
+	"Chris",
+	"Daniel",
+	"Elena",
+	"Felix",
+	"Grace",
+	"Hugo",
+	"Ivy",
+	"Jack",
+	"Julia",
+	"Kevin",
+	"Laura",
+	"Leo",
+	"Marta",
+	"Maya",
+	"Nina",
+	"Noah",
+	"Olivia",
+	"Oscar",
+	"Paul",
+	"Rita",
+	"Sam",
+	"Sara",
+	"Theo",
+	"Tina",
+	"Victor",
+	"Wendy",
+	"Yara",
+	"Zoe",
+)
 
 
-def _get_faker() -> Faker:
-	global _fake
-	if _fake is None:
-		_fake = Faker()
-	return _fake
+def random_first_name() -> str:
+	"""Return a random human-looking first name."""
+	return random.choice(_FIRST_NAMES)
 
 
 def get_random_string(length: int) -> str:
@@ -438,7 +468,7 @@ async def get_mail(
 
 async def type_name(page: pyppeteer.page.Page, credentials: Credentials) -> None:
 	"""Types name and email into the register fields."""
-	firstname = _get_faker().first_name()
+	firstname = random_first_name()
 	_step("[register] opening mega.nz/register ...", Colours.HEADER)
 	await page.goto("https://mega.nz/register", waitUntil="domcontentloaded")
 
