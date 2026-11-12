@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from utilities.etc import p_print
+from utilities.filelock import locked
 from utilities.models import Colours, Credentials, Config, migrate_config
 
 CONFIG_FILE = "config.json"
@@ -200,8 +201,10 @@ def save_credentials(
 		path = os.path.join(CREDENTIALS_DIR, "accounts.txt")
 		_plaintext_warning(path)
 		try:
-			with open(path, "a", encoding="utf-8", newline="") as file:
-				file.write(line)
+			# Appends from parallel/isolated workers must not interleave.
+			with locked(path):
+				with open(path, "a", encoding="utf-8", newline="") as file:
+					file.write(line)
 		except OSError as e:
 			p_print(f"Failed to write {path}: {e}", Colours.FAIL)
 		return
@@ -214,8 +217,9 @@ def save_credentials(
 
 	path = os.path.join(CREDENTIALS_DIR, f"{safe_name}.json")
 	try:
-		with open(path, "w", encoding="utf-8", newline="\n") as file:
-			file.write(json.dumps(data, indent=2))
+		with locked(path):
+			with open(path, "w", encoding="utf-8", newline="\n") as file:
+				file.write(json.dumps(data, indent=2))
 		_credentials_cache.pop(path, None)
 	except OSError as e:
 		p_print(f"Failed to write credentials file: {e}", Colours.FAIL)
@@ -227,16 +231,19 @@ def save_credentials_csv(credentials: Credentials) -> None:
 
 	os.makedirs(CREDENTIALS_DIR, exist_ok=True)
 	csv_path = os.path.join(CREDENTIALS_DIR, "accounts.csv")
-	write_header = not os.path.exists(csv_path) or os.stat(csv_path).st_size == 0
 	_plaintext_warning(csv_path)
 	try:
-		with open(csv_path, "a", encoding="utf-8", newline="") as file:
-			writer = csv.writer(file)
-			if write_header:
-				writer.writerow(["email", "password", "emailPassword"])
-			writer.writerow(
-				[credentials.email, credentials.password, credentials.emailPassword]
+		with locked(csv_path):
+			write_header = (
+				not os.path.exists(csv_path) or os.stat(csv_path).st_size == 0
 			)
+			with open(csv_path, "a", encoding="utf-8", newline="") as file:
+				writer = csv.writer(file)
+				if write_header:
+					writer.writerow(["email", "password", "emailPassword"])
+				writer.writerow(
+					[credentials.email, credentials.password, credentials.emailPassword]
+				)
 		p_print(f"Exported credentials to {csv_path}", Colours.OKCYAN)
 	except OSError as e:
 		p_print(f"Failed to write accounts.csv: {e}", Colours.FAIL)
@@ -268,8 +275,9 @@ def save_credentials_jsonl(credentials: Credentials) -> None:
 	path = os.path.join(CREDENTIALS_DIR, "accounts.jsonl")
 	_plaintext_warning(path)
 	try:
-		with open(path, "a", encoding="utf-8", newline="\n") as f:
-			f.write(json.dumps(asdict(credentials)) + "\n")
+		with locked(path):
+			with open(path, "a", encoding="utf-8", newline="\n") as f:
+				f.write(json.dumps(asdict(credentials)) + "\n")
 	except OSError as e:
 		p_print(f"Failed to write {path}: {e}", Colours.FAIL)
 

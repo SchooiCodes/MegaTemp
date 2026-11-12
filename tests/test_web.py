@@ -27,6 +27,15 @@ class TestWeb:
 		s = get_random_string(0)
 		assert s == ""
 
+	def test_next_poll_delay_bounds(self):
+		from utilities.web import next_poll_delay
+
+		early = [next_poll_delay(1) for _ in range(50)]
+		late = [next_poll_delay(100) for _ in range(50)]
+		assert all(0.7 <= delay <= 1.3 for delay in early)
+		assert all(2.3 <= delay <= 3.7 for delay in late)
+		assert min(early) < min(late)
+
 
 # ======================================================================
 # menu.py

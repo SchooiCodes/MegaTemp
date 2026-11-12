@@ -521,6 +521,33 @@ def _test_cli():
 		)
 	_check(r.returncode == 0, "--profile --version exits 0")
 
+	with _timed("CLI --help (parallel flags)"):
+		r = subprocess.run(
+			base + ["--help"], capture_output=True, text=True, timeout=15
+		)
+	_check(r.returncode == 0, "--help exits 0")
+	_check("--isolate" in r.stdout, "--help documents --isolate")
+	_check("--keep-profiles" in r.stdout, "--help documents --keep-profiles")
+
+	import inspect
+
+	import main as _m
+
+	sig = inspect.signature(_m.parallel_registrations)
+	_check("isolate" in sig.parameters, "parallel_registrations accepts isolate")
+	_check(
+		"keep_profiles" in sig.parameters,
+		"parallel_registrations accepts keep_profiles",
+	)
+
+	from utilities.parallel import run_pool
+
+	_check(callable(run_pool), "utilities.parallel.run_pool importable")
+
+	from utilities.filelock import locked
+
+	_check(callable(locked), "utilities.filelock.locked importable")
+
 
 def main():
 	start = time.perf_counter()

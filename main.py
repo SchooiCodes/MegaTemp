@@ -2,8 +2,10 @@
 
 import argparse
 import asyncio
+import multiprocessing
 import os
 import random
+import shutil
 import sys
 import time
 import subprocess
@@ -381,6 +383,19 @@ reg.add_argument(
 	default=1,
 	help="Number of parallel workers when using --loop. Default 1 (sequential). "
 	"Each worker gets its own browser and optionally a dedicated proxy.",
+)
+reg.add_argument(
+	"--isolate",
+	required=False,
+	action="store_true",
+	help="Run each parallel worker in its own process (true multicore "
+	"isolation: a crashed browser cannot stall the batch). Higher RAM use.",
+)
+reg.add_argument(
+	"--keep-profiles",
+	required=False,
+	action="store_true",
+	help="Keep the per-worker Chromium profiles (tmp_<n>/) after a parallel run.",
 )
 reg.add_argument(
 	"--resume",
@@ -861,25 +876,49 @@ def parallel_registrations(
 	webhook_url: str = "",
 	encryption_password: str = "",
 	mail_timeout: float | None = None,
+	isolate: bool = False,
+	keep_profiles: bool = False,
 ) -> None:
 	"""Register accounts concurrently using N parallel workers.
 
-	Each worker launches its own Chromium browser. When proxies are
-	configured with --proxy-file, each worker draws from the shared
-	rotation so they naturally use different IPs.
+	By default the workers share one asyncio loop (their Chromium instances are
+	already separate OS processes). With ``isolate=True`` every worker gets its
+	own Python process as well, so a crash or a CPU-heavy solve cannot stall
+	the others.
 	"""
 	separator(f"Parallel mode ({parallelism} workers)", Colours.HEADER)
 	successes, failures = 0, 0
 	start = time.monotonic()
+
+	if isolate:
+		successes, failures = _run_isolated_workers(
+			loop_count,
+			executable_path,
+			config,
+			parallelism,
+			visible=visible,
+			max_attempts=max_attempts,
+			export_csv=export_csv,
+			export_jsonl=export_jsonl,
+			provider_name=provider_name,
+			webhook_url=webhook_url,
+			encryption_password=encryption_password,
+			mail_timeout=mail_timeout,
+			keep_profiles=keep_profiles,
+			start=start,
+		)
+		_parallel_summary(loop_count, successes, failures, start)
+		return
+
 	_lock = asyncio.Lock()
 
 	async def _worker(worker_id: int, proxy: str | None = None):
 		nonlocal successes, failures
 
-		# Stagger worker launches with jitter so 10 workers don't all
-		# hit MEGA from the same IP simultaneously and trigger rate limits.
-		stagger = worker_id * 2.5 + random.uniform(0, 1.5)
-		await asyncio.sleep(stagger)
+		# Launch every worker at (almost) the same time. A tiny jitter keeps
+		# the first requests from being byte-identical without serialising
+		# browser launches; rate limiting is handled by the 1s cooldown.
+		await asyncio.sleep(worker_id * 0.05 + random.uniform(0, 0.25))
 
 		p_print(
 			f"Worker {worker_id} starting{' with proxy' if proxy else ''}...",
@@ -963,7 +1002,7 @@ def parallel_registrations(
 				# appears as one contiguous block per registration.
 				async with _lock:
 					for text, colour in buf:
-						p_print(text, colour)
+						p_print(f"[w{worker_id}] {text}", colour)
 					done = min(successes + failures, loop_count)
 					p_print(
 						f"[{done}/{loop_count}] ok={successes} failed={failures}"
@@ -976,15 +1015,26 @@ def parallel_registrations(
 			except Exception:
 				pass
 			_cleanup_pyppeteer(browser)
+			if not keep_profiles:
+				shutil.rmtree(f"{_CWD}/tmp_{worker_id}", ignore_errors=True)
 
 	async def _run_all():
 		_install_async_handler()
-		proxies = _proxy_manager.distribute(parallelism)
+		proxies = (
+			_proxy_manager.distribute(parallelism)
+			if _proxy_manager is not None
+			else [None] * parallelism
+		)
 		tasks = [_worker(i, proxy=proxies[i]) for i in range(parallelism)]
 		await asyncio.gather(*tasks)
 
 	asyncio.run(_run_all())
 
+	_parallel_summary(loop_count, successes, failures, start)
+
+
+def _parallel_summary(loop_count, successes, failures, start) -> None:
+	"""Print the parallel summary and exit (kept in one place for both modes)."""
 	total = elapsed(start)
 	separator("Parallel summary", Colours.HEADER)
 	p_print(f"Total accounts: {loop_count}", Colours.OKBLUE)
@@ -1002,6 +1052,183 @@ def parallel_registrations(
 		f"{successes} OK / {failures} FAIL in {total}",
 	)
 	sys.exit(0)
+
+
+def _isolate_worker(worker_id, payload, counter, lock, stop, out_queue, total):
+	"""Entry point for a process-isolated worker.
+
+	Must stay module-level so ``multiprocessing`` can pickle it by reference.
+	"""
+	_load_web()
+	try:
+		asyncio.run(
+			_isolate_worker_async(
+				worker_id, payload, counter, lock, stop, out_queue, total
+			)
+		)
+	except BaseException as exc:  # noqa: BLE001 - reported to the parent process
+		try:
+			out_queue.put(("fatal", worker_id, f"{type(exc).__name__}: {exc}"))
+		except Exception:
+			pass
+
+
+async def _isolate_worker_async(
+	worker_id, payload, counter, lock, stop, out_queue, total
+):
+	"""Claim accounts from the shared counter and register them."""
+	global _proxy_manager
+
+	_install_async_handler()
+	proxy = payload.get("proxy")
+	if proxy:
+		_proxy_manager = ProxyManager(proxy=proxy)
+
+	browser_kwargs = {
+		"headless": not payload["visible"],
+		"ignoreHTTPSErrors": True,
+		"userDataDir": f"{_CWD}/tmp_{worker_id}",
+		"args": _build_browser_args(proxy_override=proxy),
+		"executablePath": payload["executable_path"],
+		"autoClose": False,
+		"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
+	}
+	browser = await _launch_browser(browser_kwargs)
+	try:
+		while True:
+			# Atomic claim: exactly `total` registrations are started no
+			# matter how many workers are alive.
+			with lock:
+				if stop.is_set() or counter.value >= total:
+					return
+				counter.value += 1
+
+			ok = False
+			with capture_worker_output() as buf:
+				try:
+					await register(
+						None,
+						payload["executable_path"],
+						payload["config"],
+						visible=payload["visible"],
+						max_attempts=payload["max_attempts"],
+						export_csv=payload["export_csv"],
+						export_jsonl=payload["export_jsonl"],
+						provider_name=payload["provider_name"],
+						webhook_url=payload["webhook_url"],
+						encryption_password=payload["encryption_password"],
+						mail_timeout=payload["mail_timeout"],
+						_browser=browser,
+					)
+					ok = True
+				except SystemExit as e:
+					ok = e.code is None or e.code == 0
+				except Exception as exc:
+					buf.append((f"Worker {worker_id} error: {exc}", Colours.FAIL))
+					if isinstance(
+						exc,
+						(
+							pyppeteer.errors.BrowserError,
+							pyppeteer.errors.PageError,
+							pyppeteer.errors.NetworkError,
+						),
+					):
+						try:
+							await browser.close()
+						except Exception:
+							pass
+						browser = await _launch_browser(browser_kwargs)
+					else:
+						await asyncio.sleep(1.0)
+
+			# Send the whole block at once; the parent prints it, so output
+			# from different processes never interleaves.
+			for text, colour in buf:
+				out_queue.put(("line", worker_id, text, colour))
+			out_queue.put(("result", worker_id, ok))
+			if not ok:
+				await asyncio.sleep(1.0)
+	finally:
+		try:
+			await browser.close()
+		except Exception:
+			pass
+		_cleanup_pyppeteer(browser)
+		if not payload.get("keep_profiles"):
+			shutil.rmtree(f"{_CWD}/tmp_{worker_id}", ignore_errors=True)
+
+
+def _run_isolated_workers(
+	loop_count,
+	executable_path,
+	config,
+	parallelism,
+	*,
+	visible,
+	max_attempts,
+	export_csv,
+	export_jsonl,
+	provider_name,
+	webhook_url,
+	encryption_password,
+	mail_timeout,
+	keep_profiles,
+	start,
+):
+	"""Spawn one Python process per worker and collect their results."""
+	from utilities.parallel import run_pool
+
+	proxies = (
+		_proxy_manager.distribute(parallelism)
+		if _proxy_manager is not None
+		else [None] * parallelism
+	)
+	base = {
+		"executable_path": executable_path,
+		"config": config,
+		"visible": visible,
+		"max_attempts": max_attempts,
+		"export_csv": export_csv,
+		"export_jsonl": export_jsonl,
+		"provider_name": provider_name,
+		"webhook_url": webhook_url,
+		"encryption_password": encryption_password,
+		"mail_timeout": mail_timeout,
+		"keep_profiles": keep_profiles,
+	}
+	payloads = [{**base, "proxy": proxies[i]} for i in range(parallelism)]
+
+	successes = 0
+	failures = 0
+
+	def on_line(worker_id, text, colour):
+		p_print(f"[w{worker_id}] {text}", colour)
+
+	def on_result(_worker_id, ok):
+		nonlocal successes, failures
+		if ok:
+			successes += 1
+		else:
+			failures += 1
+		done = successes + failures
+		p_print(
+			f"[{done}/{loop_count}] ok={successes} failed={failures}"
+			f" ({elapsed(start)})",
+			Colours.OKBLUE,
+		)
+
+	p_print(
+		f"Spawning {parallelism} isolated worker process(es) ...",
+		Colours.HEADER,
+	)
+	return run_pool(
+		_isolate_worker,
+		parallelism,
+		loop_count,
+		payloads,
+		on_line=on_line,
+		on_result=on_result,
+	)
 
 
 _PROVIDER_FALLBACKS = {"mailtm": "guerrillamail", "guerrillamail": "mailtm"}
@@ -2573,6 +2800,8 @@ def main(argv=None) -> int:
 				webhook_url=console_args.webhook_url,
 				encryption_password=console_args.encryption_password,
 				mail_timeout=console_args.mail_timeout,
+				isolate=console_args.isolate,
+				keep_profiles=console_args.keep_profiles,
 			)
 		else:
 			loop_registrations(
@@ -2624,4 +2853,5 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+	multiprocessing.freeze_support()
 	raise SystemExit(main())

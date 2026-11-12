@@ -30,6 +30,18 @@ from utilities.etc import (
 # *seconds*, so callers convert with mail_timeout_to_attempts().
 POLL_INTERVAL = 2.0
 
+
+def next_poll_delay(attempt: int) -> float:
+	"""Delay before the next mailbox poll.
+
+	Starts at ~1s so a fast confirmation email is picked up immediately, then
+	backs off to ~3s so long waits do not hammer the provider. The ±20% jitter
+	desynchronises parallel workers polling the same provider at once.
+	"""
+	base = min(1.0 + 0.25 * (attempt - 1), 3.0)
+	return base * random.uniform(0.8, 1.2)
+
+
 # Module-level verbosity flag, toggled from main.py via set_verbose().
 _VERBOSE = False
 
@@ -393,11 +405,11 @@ async def get_mail(
 		_log("[mail] polling for confirmation email ...", Colours.HEADER)
 		prov = _get_provider(mail.provider)
 		if prov is not None:
-			for _attempt in range(1, max_attempts + 1):
+			for attempt in range(1, max_attempts + 1):
 				try:
 					return await prov.get_message(mail)
 				except LookupError:
-					await asyncio.sleep(POLL_INTERVAL)
+					await asyncio.sleep(next_poll_delay(attempt))
 			raise LookupError("Confirmation email not received after polling.")
 		raise ValueError(f"Unknown provider: {mail.provider}")
 
@@ -416,7 +428,7 @@ async def get_mail(
 				f"[mail] waiting for confirmation email ({attempt}/{max_attempts})...",
 				Colours.WARNING,
 			)
-			await asyncio.sleep(POLL_INTERVAL)
+			await asyncio.sleep(next_poll_delay(attempt))
 
 	clear_status_line()
 	raise CouldNotGetMessagesException(

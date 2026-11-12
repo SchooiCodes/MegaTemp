@@ -3,6 +3,37 @@
 All notable changes to MegaTemp are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [v1.7.0] - 2026-11-12
+
+### Added
+- **`--isolate`** - run each parallel worker in its own Python process with its
+  own asyncio loop and Chromium. A crashed browser, a blocked loop or a
+  CPU-heavy proof-of-work solve can no longer stall the other workers; output
+  and results are routed through a queue so lines never interleave.
+- **`--keep-profiles`** - keep the per-worker `tmp_<n>/` Chromium profiles for
+  debugging instead of deleting them after the batch.
+- **`scripts/bench_parallel.py`** - measures worker start spread and batch wall
+  time with a fake browser/registration (no MEGA traffic).
+
+### Changed
+- **Parallel workers now start together.** The old `worker_id * 2.5 s` stagger
+  serialised launches (worker 4 started ~10 s late); launches are now
+  near-simultaneous with a small jitter, so wall time tracks the slowest worker.
+- **Hashcash thread budget.** All concurrent solves share one global budget
+  instead of spawning four threads each, so N workers no longer create 4N
+  solver threads.
+- **Adaptive mail polling.** Polling starts at ~1 s and backs off to ~3 s with
+  jitter instead of a fixed 2 s interval.
+- **Credential writes are locked** across processes (`accounts.txt`,
+  `accounts.csv`, `accounts.jsonl`), so isolated workers cannot interleave
+  partial lines.
+- Parallel output is prefixed with `[w<id>]`; per-worker profiles are removed
+  after the run.
+
+### Fixed
+- `multiprocessing.freeze_support()` is called in the entry point so the frozen
+  executable can spawn isolated workers.
+
 ## [v1.6.1] - 2026-11-12
 
 ### Fixed

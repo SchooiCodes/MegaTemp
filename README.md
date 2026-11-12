@@ -40,7 +40,7 @@ python main.py
 |---------|-----|
 | **Single account** | `python main.py` — opens the interactive TUI menu |
 | **Mass generation** | Menu → *Loop Create*, or `python main.py -l 10` |
-| **Parallel mode** | `python main.py -l 50 -j 5` (5 concurrent workers) |
+| **Parallel mode** | `python main.py -l 50 -j 5` (5 concurrent workers); add `--isolate` to run each worker in its own process |
 | **Proxy rotation** | `python main.py -l 20 --proxy-file proxies.txt` (one proxy per worker; add `--proxy-per-attempt` to relaunch with a fresh proxy on every retry) |
 | **Resume batches** | `python main.py -l 20 --resume` (recover interrupted runs) |
 | **File upload** | `python main.py -f photo.jpg -p` (uploads + public link) |
@@ -90,7 +90,7 @@ python main.py
 Run without arguments:
 
 ```
-MegaTemp v1.6.1
+MegaTemp v1.7.0
 ╔══════════════════════════════════════════════════════╗
 ║  Create Account                                      ║
 ║  Loop Create                                         ║
@@ -130,6 +130,8 @@ Settings (per-session): max retries, visible browser, CSV export toggle.
 | `--proxy-per-attempt` | Rotate proxy on every registration attempt |
 | `--resume` | Resume an interrupted `--loop` batch |
 | `-j <n>` | Concurrent workers for `--loop` (default 1) |
+| `--isolate` | Run each parallel worker in its own process (crash isolation, true multicore) |
+| `--keep-profiles` | Keep per-worker `tmp_<n>/` Chromium profiles after a parallel run |
 | `--list-cloud` | List files in the most recent MEGA account |
 | `--download-cloud <id>` | Download a cloud file by its node ID |
 | `--download-dest <dir>` | Destination for `--download-cloud` (default `.`) |

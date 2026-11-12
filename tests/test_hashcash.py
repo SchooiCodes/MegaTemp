@@ -33,6 +33,24 @@ class TestHashcash:
 		assert isinstance(result, str)
 		assert len(result) == 6  # MEGA-base64 of 4 bytes
 
+	def test_thread_budget_caps_total_solvers(self):
+		from utilities import hashcash
+
+		budget = hashcash.SOLVE_BUDGET
+		first = hashcash._reserve_threads(budget * 10)
+		try:
+			assert first == budget
+			# A second concurrent solve still gets one thread (progress, no
+			# starvation) but cannot exceed the shared budget.
+			second = hashcash._reserve_threads(budget)
+			try:
+				assert second == 1
+			finally:
+				hashcash._release_threads(second)
+		finally:
+			hashcash._release_threads(first)
+		assert hashcash._budget_free == budget
+
 
 if __name__ == "__main__":
 	pytest.main([__file__, "-v", "--tb=short"])

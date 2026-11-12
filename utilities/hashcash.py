@@ -1,6 +1,8 @@
 import base64
 import hashlib
+import os
 import struct
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 TOKEN_BYTES = 48
@@ -9,6 +11,28 @@ REPEAT = 262144
 BUF_SIZE = PREFIX_BYTES + REPEAT * TOKEN_BYTES
 
 _MEGA_B64 = str.maketrans("+/", "-_")
+
+# Total hashcash threads allowed across *all* concurrent solves. Without this
+# budget, N parallel workers each spawned 4 threads, so 10 workers fought over
+# 40 SHA-256 threads on the same cores. The budget is shared, not per solve.
+SOLVE_BUDGET = max(1, min(8, os.cpu_count() or 4))
+_budget_free = SOLVE_BUDGET
+_budget_lock = threading.Lock()
+
+
+def _reserve_threads(wanted: int) -> int:
+	"""Reserve at least one (and at most *wanted*) solver threads."""
+	global _budget_free
+	with _budget_lock:
+		count = max(1, min(wanted, _budget_free))
+		_budget_free -= count
+		return count
+
+
+def _release_threads(count: int) -> None:
+	global _budget_free
+	with _budget_lock:
+		_budget_free = min(SOLVE_BUDGET, _budget_free + count)
 
 
 def mega_b64encode(data: bytes) -> str:
@@ -62,11 +86,12 @@ def gencash(
 		raise ValueError(f"token must decode to {TOKEN_BYTES} bytes, got {len(token)}")
 	threshold = threshold_from_easiness(easiness)
 	buf = _build_buffer(token)
-	stop = __import__("threading").Event()
-	pool = ThreadPoolExecutor(max_workers=max_workers)
+	stop = threading.Event()
+	workers = _reserve_threads(max_workers)
+	pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="hashcash")
 	futures = [
-		pool.submit(_search_worker, buf, threshold, w, max_workers, stop)
-		for w in range(max_workers)
+		pool.submit(_search_worker, buf, threshold, w, workers, stop)
+		for w in range(workers)
 	]
 	try:
 		for f in as_completed(futures, timeout=timeout_seconds):
@@ -79,6 +104,7 @@ def gencash(
 		# the timeout path, and ``shutdown(wait=True)`` then hung the caller.
 		stop.set()
 		pool.shutdown(wait=False, cancel_futures=True)
+		_release_threads(workers)
 
 
 def solve_hashcash_challenge(header_value: str) -> str:

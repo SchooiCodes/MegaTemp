@@ -170,7 +170,7 @@ class TestFastBrowserFreeCommands:
 			timeout=10,
 		)
 		assert result.returncode == 0
-		assert "v1.6.1" in result.stdout
+		assert "v1.7.0" in result.stdout
 		assert not (tmp_path / "config.json").exists()
 		assert time.monotonic() - start < 2.0
 
